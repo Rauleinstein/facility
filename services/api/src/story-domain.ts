@@ -22,10 +22,13 @@ import { DockerWorkspaceRuntime } from "./workspaces/docker.js";
 import { WorkspacePreviewService } from "./workspaces/preview.js";
 import {
   GithubProjectManifestSource,
+  LocalProjectManifestSource,
+  ProjectManifestSourceRouter,
   ProjectEnvironmentService,
 } from "./workspaces/project-environment.js";
 import { nativePreviewsEnabledForWorkspace } from "./workspaces/project-native-previews.js";
 import type { WorkspaceRuntime } from "./workspaces/runtime.js";
+import type { ProjectManifestSource } from "./workspaces/project-environment.js";
 import { WorkspaceVariablesService } from "./workspaces/variables.js";
 import { VercelWorkspaceRuntime } from "./workspaces/vercel.js";
 
@@ -34,7 +37,7 @@ export type StoryDomain = {
   stories: StoryWorkspaceService;
   catalog: AgentCatalogService;
   credentials: GithubWorkspaceCredentialBroker;
-  projectManifests: GithubProjectManifestSource;
+  projectManifests: ProjectManifestSource;
   environment: ProjectEnvironmentService;
   variables: WorkspaceVariablesService;
   engines: AgentEngineRegistry;
@@ -74,7 +77,12 @@ export function createStoryDomain(input: {
   );
   const credentials = new GithubWorkspaceCredentialBroker(input.db, tokenFactory);
   const costs = new CostBudgetService(input.db);
-  const projectManifests = new GithubProjectManifestSource(input.db, githubFactory);
+  const githubProjectManifests = new GithubProjectManifestSource(input.db, githubFactory);
+  const projectManifests = new ProjectManifestSourceRouter(
+    input.db,
+    githubProjectManifests,
+    new LocalProjectManifestSource(input.db),
+  );
   const variables = new WorkspaceVariablesService(input.db, input.config.secretMasterKey);
   const environment = new ProjectEnvironmentService(
     input.db,

@@ -7,6 +7,7 @@ import { ApiError, notFound } from "../../errors.js";
 import { createGithubClientFactory } from "../../github/client.js";
 import { removeRepositoryConnection } from "../../github/repository-connections.js";
 import { projectNativePreviewsEnabled } from "../../workspaces/project-native-previews.js";
+import { LocalRepositorySourceSchema } from "../../workspaces/local-repository.js";
 import {
   AnyObject,
   DateValue,
@@ -33,7 +34,10 @@ const ProjectSchema = z.object({
 });
 
 const ProjectSettings = z
-  .object({ nativePreviewsEnabled: z.boolean().optional() })
+  .object({
+    nativePreviewsEnabled: z.boolean().optional(),
+    repositorySource: LocalRepositorySourceSchema.optional(),
+  })
   .catchall(z.unknown());
 
 const RepositorySchema = z.object({

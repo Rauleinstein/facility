@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { newId } from "@facility/core";
 import type { FacilityDb } from "@facility/db";
-import { githubInstallations, projectRepositories, storyArtifacts, workspaces } from "@facility/db";
+import { githubInstallations, projectRepositories, projects, storyArtifacts, workspaces } from "@facility/db";
 import { and, eq } from "drizzle-orm";
 import { parseDocument } from "yaml";
 import { z } from "zod";
@@ -13,6 +13,7 @@ import type {
 } from "../github/workspace-credentials.js";
 import { appendWorkspaceEvent } from "./events.js";
 import { isSafeGitBranch } from "./git-branch.js";
+import { repositoryCloneSource, readLocalManifest, repositorySourceFromSettings } from "./local-repository.js";
 import type {
   CreateWorkspace,
   PreviewEndpoint,
@@ -200,6 +201,55 @@ export class GithubProjectManifestSource implements ProjectManifestSource {
   }
 }
 
+export class LocalProjectManifestSource implements ProjectManifestSource {
+  constructor(private readonly db: FacilityDb) {}
+
+  async load(orgId: string, projectId: string) {
+    const project = (
+      await this.db
+        .select({ settings: projects.settings })
+        .from(projects)
+        .where(and(eq(projects.orgId, orgId), eq(projects.id, projectId)))
+        .limit(1)
+    )[0];
+    if (!project) throw new ProjectEnvironmentError("project_not_found", "project not found");
+    const source = repositorySourceFromSettings(project.settings);
+    try {
+      return parseProjectManifest(await readLocalManifest(source));
+    } catch (error) {
+      if (error instanceof ProjectEnvironmentError) throw error;
+      throw new ProjectEnvironmentError(
+        "project_manifest_not_found",
+        `local repository must contain .facility.yml: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+export class ProjectManifestSourceRouter implements ProjectManifestSource {
+  constructor(
+    private readonly db: FacilityDb,
+    private readonly github: GithubProjectManifestSource,
+    private readonly local: LocalProjectManifestSource,
+  ) {}
+
+  async load(orgId: string, projectId: string) {
+    const project = (
+      await this.db
+        .select({ settings: projects.settings })
+        .from(projects)
+        .where(and(eq(projects.orgId, orgId), eq(projects.id, projectId)))
+        .limit(1)
+    )[0];
+    const settings = project?.settings;
+    if (settings && typeof settings === "object" && "repositorySource" in settings) {
+      repositorySourceFromSettings(settings);
+      return this.local.load(orgId, projectId);
+    }
+    return this.github.load(orgId, projectId);
+  }
+}
+
 type EnvironmentInput = {
   orgId: string;
   projectId: string;
@@ -253,7 +303,7 @@ export class ProjectEnvironmentService {
         await this.runCommand(
           preparedInput,
           "git",
-          ["clone", `${this.gitBaseUrl}/${repository.owner}/${repository.name}.git`, cwd],
+          repositoryCloneArgs(repository, this.gitBaseUrl, cwd),
           ".",
           `clone ${repository.owner}/${repository.name}`,
         );
@@ -656,6 +706,17 @@ export class ProjectEnvironmentService {
     }
     return result;
   }
+}
+
+export function repositoryCloneArgs(
+  repository: WorkspaceRepository,
+  gitBaseUrl: string,
+  cwd: string,
+): string[] {
+  const source = repository.source
+    ? repositoryCloneSource(repository.source)
+    : `${gitBaseUrl}/${repository.owner}/${repository.name}.git`;
+  return ["clone", source, cwd];
 }
 
 export function projectEnvironmentVariableName(projectId: string, name: string) {

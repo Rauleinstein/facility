@@ -1,13 +1,16 @@
-import { type FacilityDb, githubInstallations, projectRepositories } from "@facility/db";
+import { type FacilityDb, githubInstallations, projectRepositories, projects } from "@facility/db";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { GithubMaintainerTokenFactory } from "./client.js";
 import type { GithubGitIdentity } from "./git-identity.js";
+import type { LocalRepositorySource } from "../workspaces/local-repository.js";
+import { repositorySourceFromSettings } from "../workspaces/local-repository.js";
 
 export type WorkspaceRepository = {
   owner: string;
   name: string;
   defaultBranch: string;
   role: "primary" | "related";
+  source?: LocalRepositorySource;
 };
 
 export type GithubWorkspaceCredentials = {
@@ -34,6 +37,29 @@ export class GithubWorkspaceCredentialBroker {
   ) {}
 
   async issue(orgId: string, projectId: string): Promise<GithubWorkspaceCredentials> {
+    const project = (
+      await this.db
+        .select({ settings: projects.settings })
+        .from(projects)
+        .where(and(eq(projects.orgId, orgId), eq(projects.id, projectId)))
+        .limit(1)
+    )[0];
+    if (project?.settings && typeof project.settings === "object" && "repositorySource" in project.settings) {
+      const source = repositorySourceFromSettings(project.settings);
+      const identity = { name: "facility-local", email: "facility-local@localhost" };
+      return {
+        gitIdentity: identity,
+        repositories: [{
+          owner: source.owner,
+          name: source.name,
+          defaultBranch: source.defaultBranch,
+          role: "primary",
+          source,
+        }],
+        environment: {},
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000),
+      };
+    }
     const repositories = await this.db
       .select()
       .from(projectRepositories)
