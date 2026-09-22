@@ -1,3 +1,8 @@
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   type AgentManifest,
   type AgentManifestSource,
@@ -14,10 +19,16 @@ import {
   githubInstallations,
   projectRepositories,
   projectSkills,
+  projects,
 } from "@facility/db";
 import { and, asc, eq, notInArray, sql } from "drizzle-orm";
 import { FacilityGithubClient, type GithubClientFactory } from "../github/client.js";
 import { readRepoFiles } from "../github/repo-files.js";
+import {
+  type LocalRepositorySource,
+  repositoryCloneSource,
+  repositorySourceFromSettings,
+} from "../workspaces/local-repository.js";
 import { isAgentManifestPath, isProjectSkillPath, readAgentCatalogFiles } from "./catalog-files.js";
 
 export type AgentCatalogSnapshot = {
@@ -57,6 +68,133 @@ export class AgentCatalogError extends Error {
   ) {
     super(message);
     this.name = "AgentCatalogError";
+  }
+}
+
+const execFileAsync = promisify(execFile);
+
+async function localCatalogFiles(source: LocalRepositorySource) {
+  const files = new Map<string, string>();
+  const roots = [".agents", ".claude/skills"];
+  if (source.path) {
+    async function visit(relative: string): Promise<void> {
+      const absolute = join(source.path as string, relative);
+      for (const entry of await readdir(absolute, { withFileTypes: true })) {
+        const child = `${relative}/${entry.name}`;
+        if (entry.isDirectory()) await visit(child);
+        else if (isAgentManifestPath(child) || isProjectSkillPath(child)) {
+          files.set(child, await readFile(join(source.path as string, child), "utf8"));
+        }
+      }
+    }
+    for (const root of roots) {
+      try {
+        await visit(root);
+      } catch (error) {
+        if ((error as { code?: string }).code !== "ENOENT") throw error;
+      }
+    }
+  } else {
+    const gitDir = repositoryCloneSource(source);
+    const ref = source.defaultBranch;
+    const { stdout } = await execFileAsync("git", [
+      `--git-dir=${gitDir}`,
+      "ls-tree",
+      "-r",
+      "--name-only",
+      `${ref}^{tree}`,
+    ]);
+    for (const file of stdout
+      .split("\\n")
+      .filter((path) => isAgentManifestPath(path) || isProjectSkillPath(path))) {
+      const content = await execFileAsync("git", [`--git-dir=${gitDir}`, "show", `${ref}:${file}`]);
+      files.set(file, content.stdout);
+    }
+  }
+  return files;
+}
+
+async function localCatalogSnapshot(source: LocalRepositorySource): Promise<AgentCatalogSnapshot> {
+  const files = await localCatalogFiles(source);
+  const digest = createHash("sha256");
+  for (const [file, content] of [...files.entries()].sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
+    digest.update(file).update("\\0").update(content).update("\\0");
+  }
+  const entries = [...files.entries()];
+  return {
+    commitSha: `local:${digest.digest("hex")}`,
+    sources: entries
+      .filter(([file]) => isAgentManifestPath(file))
+      .map(([file, source]) => ({ file, source }))
+      .sort((left, right) => left.file.localeCompare(right.file)),
+    skills: entries
+      .filter(([file]) => isProjectSkillPath(file))
+      .map(([file, source]) => ({ file, source }))
+      .sort((left, right) => left.file.localeCompare(right.file)),
+  };
+}
+
+export class LocalAgentCatalogSource implements AgentCatalogSource {
+  constructor(private readonly db: FacilityDb) {}
+
+  async load(orgId: string, projectId: string): Promise<AgentCatalogSnapshot> {
+    const project = (
+      await this.db
+        .select({ settings: projects.settings })
+        .from(projects)
+        .where(and(eq(projects.orgId, orgId), eq(projects.id, projectId)))
+        .limit(1)
+    )[0];
+    if (!project) throw new AgentCatalogError("project_not_found", "project not found", 404);
+    try {
+      return await localCatalogSnapshot(repositorySourceFromSettings(project.settings));
+    } catch (error) {
+      if (error instanceof AgentCatalogError) throw error;
+      throw new AgentCatalogError(
+        "agent_catalog_unavailable",
+        "Agent catalog could not be refreshed from the local repository",
+        503,
+      );
+    }
+  }
+}
+
+export class AgentCatalogSourceRouter implements AgentCatalogSource {
+  constructor(
+    private readonly db: FacilityDb,
+    private readonly github: AgentCatalogSource,
+    private readonly local: LocalAgentCatalogSource,
+  ) {}
+
+  async load(orgId: string, projectId: string) {
+    const project = (
+      await this.db
+        .select({ settings: projects.settings })
+        .from(projects)
+        .where(and(eq(projects.orgId, orgId), eq(projects.id, projectId)))
+        .limit(1)
+    )[0];
+    const settings = project?.settings;
+    if (settings && typeof settings === "object" && "repositorySource" in settings) {
+      repositorySourceFromSettings(settings);
+      return this.local.load(orgId, projectId);
+    }
+    return this.github.load(orgId, projectId);
+  }
+
+  proposeUpdate(...args: Parameters<NonNullable<AgentCatalogSource["proposeUpdate"]>>) {
+    return (
+      this.github.proposeUpdate?.(...args) ??
+      Promise.reject(
+        new AgentCatalogError(
+          "agent_catalog_read_only",
+          "This agent catalog source does not support Git proposals",
+          501,
+        ),
+      )
+    );
   }
 }
 

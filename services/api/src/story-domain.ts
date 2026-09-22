@@ -1,5 +1,10 @@
 import type { FacilityDb } from "@facility/db";
-import { AgentCatalogService, GithubAgentCatalogSource } from "./agents/catalog.js";
+import {
+  AgentCatalogService,
+  AgentCatalogSourceRouter,
+  GithubAgentCatalogSource,
+  LocalAgentCatalogSource,
+} from "./agents/catalog.js";
 import { GithubAgentTriggerService } from "./agents/github-triggers.js";
 import { AgentScheduler } from "./agents/scheduler.js";
 import {
@@ -20,15 +25,15 @@ import { TurnGitEvidenceService } from "./turns/git-evidence.js";
 import type { AppConfig } from "./types.js";
 import { DockerWorkspaceRuntime } from "./workspaces/docker.js";
 import { WorkspacePreviewService } from "./workspaces/preview.js";
+import type { ProjectManifestSource } from "./workspaces/project-environment.js";
 import {
   GithubProjectManifestSource,
   LocalProjectManifestSource,
-  ProjectManifestSourceRouter,
   ProjectEnvironmentService,
+  ProjectManifestSourceRouter,
 } from "./workspaces/project-environment.js";
 import { nativePreviewsEnabledForWorkspace } from "./workspaces/project-native-previews.js";
 import type { WorkspaceRuntime } from "./workspaces/runtime.js";
-import type { ProjectManifestSource } from "./workspaces/project-environment.js";
 import { WorkspaceVariablesService } from "./workspaces/variables.js";
 import { VercelWorkspaceRuntime } from "./workspaces/vercel.js";
 
@@ -73,7 +78,11 @@ export function createStoryDomain(input: {
       : unavailableTokenFactory);
   const catalog = new AgentCatalogService(
     input.db,
-    new GithubAgentCatalogSource(input.db, githubFactory),
+    new AgentCatalogSourceRouter(
+      input.db,
+      new GithubAgentCatalogSource(input.db, githubFactory),
+      new LocalAgentCatalogSource(input.db),
+    ),
   );
   const credentials = new GithubWorkspaceCredentialBroker(input.db, tokenFactory);
   const costs = new CostBudgetService(input.db);

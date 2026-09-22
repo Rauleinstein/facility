@@ -1,5 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { newId } from "@facility/core";
 import {
@@ -20,7 +23,9 @@ import {
   AgentCatalogService,
   type AgentCatalogSnapshot,
   type AgentCatalogSource,
+  AgentCatalogSourceRouter,
   GithubAgentCatalogSource,
+  LocalAgentCatalogSource,
 } from "../src/agents/catalog.js";
 import type { GithubClientFactory } from "../src/github/client.js";
 import { GithubWorkspaceCredentialBroker } from "../src/github/workspace-credentials.js";
@@ -198,6 +203,43 @@ describe("agent catalog and full GitHub workspace credentials", async () => {
       name: "builder",
       commitSha: "b".repeat(40),
     });
+  });
+
+  it("loads local agents and skills without invoking GitHub", async () => {
+    const root = await mkdtemp(join(tmpdir(), "facility-local-catalog-"));
+    await mkdir(join(root, ".agents", "skills", "review"), { recursive: true });
+    await writeFile(join(root, ".agents", "builder.md"), source("builder"));
+    await writeFile(
+      join(root, ".agents", "skills", "review", "SKILL.md"),
+      "---\nname: review\ndescription: Reviews changes.\n---\nReview.",
+    );
+    await db
+      .update(projects)
+      .set({ settings: { repositorySource: { type: "local", path: root, name: "local-app" } } })
+      .where(eq(projects.id, projectId));
+    const github = (() => {
+      throw new Error("GitHub must not be called for local catalog refresh");
+    }) as unknown as GithubClientFactory;
+    const catalog = new AgentCatalogService(
+      db,
+      new AgentCatalogSourceRouter(
+        db,
+        new GithubAgentCatalogSource(db, github),
+        new LocalAgentCatalogSource(db),
+      ),
+    );
+
+    const [agents, skills] = await Promise.all([
+      catalog.list(orgId, projectId),
+      catalog.listSkills(orgId, projectId),
+    ]);
+    expect(agents.map(({ name }) => name)).toEqual(["builder"]);
+    expect(skills.map(({ name }) => name)).toEqual(["review"]);
+    expect(agents[0]?.commitSha).toMatch(/^local:/);
+    expect(agents[0]?.commitSha).toBe(
+      (await new LocalAgentCatalogSource(db).load(orgId, projectId)).commitSha,
+    );
+    await db.update(projects).set({ settings: {} }).where(eq(projects.id, projectId));
   });
 
   it("serves the last valid catalog while GitHub is unavailable", async () => {
