@@ -68,7 +68,15 @@ export class DockerWorkspaceRuntime implements WorkspaceRuntime {
         Memory: Math.max(512, input.resources?.memoryMb ?? 4_096) * 1024 * 1024,
         NanoCpus: Math.max(0.5, input.resources?.cpu ?? 2) * 1_000_000_000,
         PidsLimit: 4_096,
-        Mounts: [{ Type: "volume", Source: names.volume, Target: "/workspace", ReadOnly: false }],
+        Mounts: [
+          { Type: "volume", Source: names.volume, Target: "/workspace", ReadOnly: false },
+          ...(input.mounts ?? []).map((mount) => ({
+            Type: "bind" as const,
+            Source: mount.source,
+            Target: mount.target,
+            ReadOnly: mount.readOnly ?? false,
+          })),
+        ],
         PortBindings: Object.fromEntries(
           gatewayPorts.map(({ gatewayPort }) => [
             `${gatewayPort}/tcp`,

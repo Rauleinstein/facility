@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { repositoryCloneArgs } from "../src/workspaces/project-environment.js";
 import {
   LocalRepositorySourceSchema,
   repositoryCloneSource,
   repositorySourceFromSettings,
 } from "../src/workspaces/local-repository.js";
+import {
+  projectWorkspaceInput,
+  repositoryCloneArgs,
+} from "../src/workspaces/project-environment.js";
 
 describe("local repository source", () => {
   it("accepts an absolute local path and exposes it as the clone source", () => {
@@ -19,10 +22,16 @@ describe("local repository source", () => {
   it("accepts a local git remote and rejects missing or ambiguous sources", () => {
     expect(
       repositoryCloneSource(
-        LocalRepositorySourceSchema.parse({ type: "local", remote: "file:///srv/git/app.git", name: "app" }),
+        LocalRepositorySourceSchema.parse({
+          type: "local",
+          remote: "file:///srv/git/app.git",
+          name: "app",
+        }),
       ),
-    ).toBe("file:///srv/git/app.git");
-    expect(() => LocalRepositorySourceSchema.parse({ type: "local", name: "app" })).toThrow(/exactly one/i);
+    ).toBe("/srv/git/app.git");
+    expect(() => LocalRepositorySourceSchema.parse({ type: "local", name: "app" })).toThrow(
+      /exactly one/i,
+    );
     expect(() =>
       LocalRepositorySourceSchema.parse({
         type: "local",
@@ -34,14 +43,18 @@ describe("local repository source", () => {
   });
 
   it("uses local sources without constructing a GitHub clone URL", () => {
-    const source = LocalRepositorySourceSchema.parse({ type: "local", path: "/srv/app", name: "app" });
+    const source = LocalRepositorySourceSchema.parse({
+      type: "local",
+      path: "/srv/app",
+      name: "app",
+    });
     expect(
       repositoryCloneArgs(
         { owner: "local", name: "app", defaultBranch: "main", role: "primary", source },
         "https://github.com",
         "repos/local/app",
       ),
-    ).toEqual(["clone", "/srv/app", "repos/local/app"]);
+    ).toEqual(["clone", "/facility-local-repositories/local/app", "repos/local/app"]);
   });
 
   it("keeps GitHub clone URL construction unchanged", () => {
@@ -54,10 +67,35 @@ describe("local repository source", () => {
     ).toEqual(["clone", "https://github.example/acme/app.git", "repos/acme/app"]);
   });
 
+  it("adds a read-only Docker mount for local repositories", () => {
+    const input = projectWorkspaceInput(
+      {
+        version: 1,
+        repositories: { primary: "local/app", related: [] },
+        environment: { start: "npm start", secrets: [], variables: [], services: {} },
+        hash: "hash",
+        localRepositorySources: [
+          { type: "local", path: "/srv/app", name: "app", owner: "local", defaultBranch: "main" },
+        ],
+      },
+      "facility-runner:dev",
+    );
+    expect(input.mounts).toEqual([
+      {
+        type: "bind",
+        source: "/srv/app",
+        target: "/facility-local-repositories/local/app",
+        readOnly: true,
+      },
+    ]);
+  });
+
   it("requires an explicit local discriminator in project settings", () => {
     expect(() => repositorySourceFromSettings({})).toThrow(/repositorySource/i);
     expect(() =>
-      repositorySourceFromSettings({ repositorySource: { type: "github", owner: "acme", name: "app" } }),
+      repositorySourceFromSettings({
+        repositorySource: { type: "github", owner: "acme", name: "app" },
+      }),
     ).toThrow(/local/i);
     expect(
       repositorySourceFromSettings({

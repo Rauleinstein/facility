@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 import { newId } from "@facility/core";
 import type { FacilityDb } from "@facility/db";
-import { githubInstallations, projectRepositories, projects, storyArtifacts, workspaces } from "@facility/db";
+import {
+  githubInstallations,
+  projectRepositories,
+  projects,
+  storyArtifacts,
+  workspaces,
+} from "@facility/db";
 import { and, eq } from "drizzle-orm";
 import { parseDocument } from "yaml";
 import { z } from "zod";
@@ -13,7 +19,12 @@ import type {
 } from "../github/workspace-credentials.js";
 import { appendWorkspaceEvent } from "./events.js";
 import { isSafeGitBranch } from "./git-branch.js";
-import { repositoryCloneSource, readLocalManifest, repositorySourceFromSettings } from "./local-repository.js";
+import {
+  readLocalManifest,
+  repositoryCloneSource,
+  repositoryMountTarget,
+  repositorySourceFromSettings,
+} from "./local-repository.js";
 import type {
   CreateWorkspace,
   PreviewEndpoint,
@@ -80,10 +91,13 @@ export const ProjectManifestSchema = z
   .strict();
 
 export type ProjectManifest = z.infer<typeof ProjectManifestSchema> & { hash: string };
+export type LocalProjectManifest = ProjectManifest & {
+  localRepositorySources?: import("./local-repository.js").LocalRepositorySource[];
+};
 
 /** One creation contract for API/UI/MCP, GitHub triggers and scheduled stories. */
 export function projectWorkspaceInput(
-  manifest: ProjectManifest,
+  manifest: LocalProjectManifest,
   defaultImage: string,
 ): Omit<CreateWorkspace, "id"> {
   const resources = manifest.environment.resources;
@@ -96,6 +110,16 @@ export function projectWorkspaceInput(
       protocol: value.protocol,
       websocket: value.websocket,
     })),
+    ...(manifest.localRepositorySources
+      ? {
+          mounts: manifest.localRepositorySources.map((source) => ({
+            type: "bind" as const,
+            source: repositoryCloneSource(source),
+            target: repositoryMountTarget(source),
+            readOnly: true,
+          })),
+        }
+      : {}),
   };
 }
 
@@ -215,7 +239,10 @@ export class LocalProjectManifestSource implements ProjectManifestSource {
     if (!project) throw new ProjectEnvironmentError("project_not_found", "project not found");
     const source = repositorySourceFromSettings(project.settings);
     try {
-      return parseProjectManifest(await readLocalManifest(source));
+      return {
+        ...parseProjectManifest(await readLocalManifest(source)),
+        localRepositorySources: [source],
+      };
     } catch (error) {
       if (error instanceof ProjectEnvironmentError) throw error;
       throw new ProjectEnvironmentError(
@@ -714,7 +741,7 @@ export function repositoryCloneArgs(
   cwd: string,
 ): string[] {
   const source = repository.source
-    ? repositoryCloneSource(repository.source)
+    ? `/facility-local-repositories/${repository.owner}/${repository.name}`
     : `${gitBaseUrl}/${repository.owner}/${repository.name}.git`;
   return ["clone", source, cwd];
 }

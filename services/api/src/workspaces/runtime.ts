@@ -11,12 +11,20 @@ export type WorkspacePort = {
   websocket?: boolean;
 };
 
+export type WorkspaceMount = {
+  type: "bind";
+  source: string;
+  target: string;
+  readOnly?: boolean;
+};
+
 export type CreateWorkspace = {
   id: string;
   image: string;
   environment?: Record<string, string>;
   ports?: WorkspacePort[];
   resources?: { cpu: number; memoryMb: number };
+  mounts?: WorkspaceMount[];
 };
 
 export type WorkspaceLocator = CreateWorkspace & {

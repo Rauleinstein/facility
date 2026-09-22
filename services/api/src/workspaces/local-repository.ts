@@ -1,32 +1,48 @@
-import { isAbsolute } from "node:path";
-import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { readFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { z } from "zod";
 
 const execFileAsync = promisify(execFile);
 
-const LocalPath = z.string().trim().min(1).refine(isAbsolute, "local repository path must be absolute");
+const LocalPath = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(isAbsolute, "local repository path must be absolute");
 const LocalRemote = z
   .string()
   .trim()
   .min(1)
-  .refine((value) => isAbsolute(value) || value.startsWith("file://"), "local repository remote must be an absolute path or file:// URL");
+  .refine(
+    (value) => isAbsolute(value) || value.startsWith("file://"),
+    "local repository remote must be an absolute path or file:// URL",
+  );
 
 export const LocalRepositorySourceSchema = z
   .object({
     type: z.literal("local"),
     path: LocalPath.optional(),
     remote: LocalRemote.optional(),
-    owner: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/i).default("local"),
+    owner: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9._-]{0,99}$/i)
+      .default("local"),
     name: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/i),
-    defaultBranch: z.string().regex(/^[A-Za-z0-9._/-]{1,200}$/).default("main"),
+    defaultBranch: z
+      .string()
+      .regex(/^[A-Za-z0-9._/-]{1,200}$/)
+      .default("main"),
   })
   .strict()
   .superRefine((value, context) => {
     if ((value.path === undefined) === (value.remote === undefined)) {
-      context.addIssue({ code: "custom", message: "local repository source requires exactly one of path or remote" });
+      context.addIssue({
+        code: "custom",
+        message: "local repository source requires exactly one of path or remote",
+      });
     }
   });
 
@@ -45,7 +61,15 @@ export function repositorySourceFromSettings(settings: unknown): LocalRepository
 
 export function repositoryCloneSource(source: LocalRepositorySource): string {
   const validated = LocalRepositorySourceSchema.parse(source);
-  return validated.path ?? validated.remote!;
+  if (validated.path) return validated.path;
+  const remote = validated.remote;
+  if (!remote) throw new Error("local repository source has no remote");
+  return remote.startsWith("file://") ? fileURLToPath(remote) : remote;
+}
+
+export function repositoryMountTarget(source: LocalRepositorySource): string {
+  const validated = LocalRepositorySourceSchema.parse(source);
+  return `/facility-local-repositories/${validated.owner}/${validated.name}`;
 }
 
 export async function readLocalManifest(source: LocalRepositorySource): Promise<string> {

@@ -76,6 +76,9 @@ services:
     volumes:
       # The API inspects workspace state through the host Docker daemon.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Local repository sources must be under this same host path so the API
+      # can read .facility.yml and Docker workspaces can bind-mount the source.
+      - ${FACILITY_LOCAL_REPOSITORIES_ROOT:-/srv/facility-repositories}:${FACILITY_LOCAL_REPOSITORIES_ROOT:-/srv/facility-repositories}:ro
     depends_on:
       migrate: { condition: service_completed_successfully }
       runner-image: { condition: service_completed_successfully }
@@ -113,6 +116,7 @@ services:
     volumes:
       # Workspace volumes outlive these API and worker containers.
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${FACILITY_LOCAL_REPOSITORIES_ROOT:-/srv/facility-repositories}:${FACILITY_LOCAL_REPOSITORIES_ROOT:-/srv/facility-repositories}:ro
     depends_on:
       migrate: { condition: service_completed_successfully }
       runner-image: { condition: service_completed_successfully }
