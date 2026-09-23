@@ -19,12 +19,12 @@
     },
     "dev": {
       "cache": false,
-      "env": ["DATABASE_URL", "FACILITY_DEV_ORIGINS"],
+      "env": ["DATABASE_URL", "FACILITY_DEV_ORIGINS", "FACILITY_LOCAL_REPOSITORIES_ROOT"],
       "persistent": true
     },
     "dev:worker": {
       "cache": false,
-      "env": ["DATABASE_URL"],
+      "env": ["DATABASE_URL", "FACILITY_LOCAL_REPOSITORIES_ROOT"],
       "persistent": true
     }
   }
