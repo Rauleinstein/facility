@@ -6,8 +6,11 @@ import { z } from "zod";
 import { ApiError, notFound } from "../../errors.js";
 import { createGithubClientFactory } from "../../github/client.js";
 import { removeRepositoryConnection } from "../../github/repository-connections.js";
+import {
+  assertLocalRepositorySourceWithinRoot,
+  LocalRepositorySourceSchema,
+} from "../../workspaces/local-repository.js";
 import { projectNativePreviewsEnabled } from "../../workspaces/project-native-previews.js";
-import { LocalRepositorySourceSchema } from "../../workspaces/local-repository.js";
 import {
   AnyObject,
   DateValue,
@@ -112,6 +115,7 @@ export async function registerProjectRoutes(app: FastifyInstance, context: V1Rou
         description?: string;
         settings?: Record<string, unknown>;
       };
+      validateLocalSettings(body.settings, context.config.localRepositoriesRoot);
       const row = (
         await db
           .insert(projects)
@@ -171,6 +175,7 @@ export async function registerProjectRoutes(app: FastifyInstance, context: V1Rou
         settings?: Record<string, unknown>;
         nativePreviewsEnabled?: boolean;
       };
+      validateLocalSettings(body.settings, context.config.localRepositoriesRoot);
       const { nativePreviewsEnabled, ...fields } = body;
       const row = (
         await db
@@ -379,6 +384,23 @@ async function loadProject(db: FacilityDb, orgId: string, id: string) {
 
 function projectId(request: { params: unknown }) {
   return (request.params as { projectId: string }).projectId;
+}
+
+function validateLocalSettings(
+  settings: Record<string, unknown> | undefined,
+  root = "/srv/facility-repositories",
+) {
+  const source = settings?.repositorySource;
+  if (source === undefined) return;
+  try {
+    assertLocalRepositorySourceWithinRoot(LocalRepositorySourceSchema.parse(source), root);
+  } catch (error) {
+    throw new ApiError(
+      400,
+      "local_repository_path_invalid",
+      error instanceof Error ? error.message : "Invalid local repository path",
+    );
+  }
 }
 
 async function resolveGithubRepository(

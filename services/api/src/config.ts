@@ -47,6 +47,11 @@ const EnvSchema = z
       z.string().min(32).max(128).optional(),
     ),
     FACILITY_WORKSPACE_IMAGE: z.string().default("facility-runner:dev"),
+    FACILITY_LOCAL_REPOSITORIES_ROOT: z
+      .string()
+      .trim()
+      .min(1)
+      .default("/srv/facility-repositories"),
     FACILITY_WORKSPACE_DRIVER: z.enum(["docker", "vercel"]).default("docker"),
     AUTH_IDENTITY_PROVIDER: z.enum(["github", "oidc"]).default("github"),
     AUTH_CALLBACK_URL: OptionalUrl,
@@ -298,6 +303,7 @@ export function readConfig(env = process.env): AppConfig {
       facilityInsecureDev: parsed.FACILITY_INSECURE_DEV === "1",
     }),
     workspaceImage: parsed.FACILITY_WORKSPACE_IMAGE,
+    localRepositoriesRoot: parsed.FACILITY_LOCAL_REPOSITORIES_ROOT,
     workspaceDriver: parsed.FACILITY_WORKSPACE_DRIVER,
     authIdentityProvider: parsed.AUTH_IDENTITY_PROVIDER,
     authCallbackUrl: parsed.AUTH_CALLBACK_URL ?? `${webUrl.replace(/\/$/, "")}/api/auth/callback`,

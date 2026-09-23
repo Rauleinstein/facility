@@ -81,7 +81,7 @@ export function createStoryDomain(input: {
     new AgentCatalogSourceRouter(
       input.db,
       new GithubAgentCatalogSource(input.db, githubFactory),
-      new LocalAgentCatalogSource(input.db),
+      new LocalAgentCatalogSource(input.db, input.config.localRepositoriesRoot),
     ),
   );
   const credentials = new GithubWorkspaceCredentialBroker(input.db, tokenFactory);
@@ -90,7 +90,7 @@ export function createStoryDomain(input: {
   const projectManifests = new ProjectManifestSourceRouter(
     input.db,
     githubProjectManifests,
-    new LocalProjectManifestSource(input.db),
+    new LocalProjectManifestSource(input.db, input.config.localRepositoriesRoot),
   );
   const variables = new WorkspaceVariablesService(input.db, input.config.secretMasterKey);
   const environment = new ProjectEnvironmentService(

@@ -33,6 +33,7 @@ export type AppConfig = {
   previewSurfaceToken?: string;
   previewSites?: import("./workspaces/preview-sites.js").PreviewSite[];
   workspaceImage: string;
+  localRepositoriesRoot?: string;
   workspaceDriver: "docker" | "vercel";
   authIdentityProvider?: "github" | "oidc";
   authCallbackUrl?: string;

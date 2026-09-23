@@ -20,6 +20,7 @@ import type {
 import { appendWorkspaceEvent } from "./events.js";
 import { isSafeGitBranch } from "./git-branch.js";
 import {
+  assertLocalRepositorySourceWithinRootRealpath,
   readLocalManifest,
   repositoryCloneSource,
   repositoryMountTarget,
@@ -226,7 +227,10 @@ export class GithubProjectManifestSource implements ProjectManifestSource {
 }
 
 export class LocalProjectManifestSource implements ProjectManifestSource {
-  constructor(private readonly db: FacilityDb) {}
+  constructor(
+    private readonly db: FacilityDb,
+    private readonly localRepositoriesRoot?: string,
+  ) {}
 
   async load(orgId: string, projectId: string) {
     const project = (
@@ -239,6 +243,8 @@ export class LocalProjectManifestSource implements ProjectManifestSource {
     if (!project) throw new ProjectEnvironmentError("project_not_found", "project not found");
     const source = repositorySourceFromSettings(project.settings);
     try {
+      if (this.localRepositoriesRoot)
+        await assertLocalRepositorySourceWithinRootRealpath(source, this.localRepositoriesRoot);
       return {
         ...parseProjectManifest(await readLocalManifest(source)),
         localRepositorySources: [source],

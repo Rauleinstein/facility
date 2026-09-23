@@ -25,6 +25,7 @@ import { and, asc, eq, notInArray, sql } from "drizzle-orm";
 import { FacilityGithubClient, type GithubClientFactory } from "../github/client.js";
 import { readRepoFiles } from "../github/repo-files.js";
 import {
+  assertLocalRepositorySourceWithinRootRealpath,
   type LocalRepositorySource,
   repositoryCloneSource,
   repositorySourceFromSettings,
@@ -73,7 +74,7 @@ export class AgentCatalogError extends Error {
 
 const execFileAsync = promisify(execFile);
 
-async function localCatalogFiles(source: LocalRepositorySource) {
+export async function localCatalogFiles(source: LocalRepositorySource) {
   const files = new Map<string, string>();
   const roots = [".agents", ".claude/skills"];
   if (source.path) {
@@ -82,7 +83,7 @@ async function localCatalogFiles(source: LocalRepositorySource) {
       for (const entry of await readdir(absolute, { withFileTypes: true })) {
         const child = `${relative}/${entry.name}`;
         if (entry.isDirectory()) await visit(child);
-        else if (isAgentManifestPath(child) || isProjectSkillPath(child)) {
+        else if (entry.isFile() && (isAgentManifestPath(child) || isProjectSkillPath(child))) {
           files.set(child, await readFile(join(source.path as string, child), "utf8"));
         }
       }
@@ -105,7 +106,7 @@ async function localCatalogFiles(source: LocalRepositorySource) {
       `${ref}^{tree}`,
     ]);
     for (const file of stdout
-      .split("\\n")
+      .split("\n")
       .filter((path) => isAgentManifestPath(path) || isProjectSkillPath(path))) {
       const content = await execFileAsync("git", [`--git-dir=${gitDir}`, "show", `${ref}:${file}`]);
       files.set(file, content.stdout);
@@ -137,7 +138,10 @@ async function localCatalogSnapshot(source: LocalRepositorySource): Promise<Agen
 }
 
 export class LocalAgentCatalogSource implements AgentCatalogSource {
-  constructor(private readonly db: FacilityDb) {}
+  constructor(
+    private readonly db: FacilityDb,
+    private readonly localRepositoriesRoot?: string,
+  ) {}
 
   async load(orgId: string, projectId: string): Promise<AgentCatalogSnapshot> {
     const project = (
@@ -149,7 +153,10 @@ export class LocalAgentCatalogSource implements AgentCatalogSource {
     )[0];
     if (!project) throw new AgentCatalogError("project_not_found", "project not found", 404);
     try {
-      return await localCatalogSnapshot(repositorySourceFromSettings(project.settings));
+      const source = repositorySourceFromSettings(project.settings);
+      if (this.localRepositoriesRoot)
+        await assertLocalRepositorySourceWithinRootRealpath(source, this.localRepositoriesRoot);
+      return await localCatalogSnapshot(source);
     } catch (error) {
       if (error instanceof AgentCatalogError) throw error;
       throw new AgentCatalogError(

@@ -36,8 +36,8 @@ The source must contain `.facility.yml`. Start a story through the normal API/CL
 
 ## Security limitations
 
-- The path or `file://` remote is read by the Facility API process and is trusted operator configuration. Do not accept it directly from untrusted users. In Docker Compose it must be under the mounted repository root described above.
-- Facility can read and execute code from the configured repository inside the workspace. Use a dedicated host path and least-privilege filesystem permissions.
+- The path or `file://` remote is read by the Facility API process and is trusted operator configuration. In Docker Compose it must be under the mounted repository root described above; project create/update rejects paths outside that root and runtime checks resolve symlinks before reading.
+- Local agent catalog discovery ignores symlinked files, and bare remote catalog reads use the configured branch snapshot without invoking GitHub.
 - Local mode supplies no GitHub credentials and never calls GitHub clone URLs. GitHub issue, pull-request, CI, and webhook operations are unavailable unless the project is configured with the default GitHub source.
 - Local remotes are not uploaded, pushed, or synchronized by Facility. Back up and protect the host repository separately.
 - Docker workspace isolation is still required; local mode does not make repository code safe to run on the host.

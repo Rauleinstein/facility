@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { readFile, realpath } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -65,6 +65,37 @@ export function repositoryCloneSource(source: LocalRepositorySource): string {
   const remote = validated.remote;
   if (!remote) throw new Error("local repository source has no remote");
   return remote.startsWith("file://") ? fileURLToPath(remote) : remote;
+}
+
+export function assertLocalRepositorySourceWithinRoot(
+  source: LocalRepositorySource,
+  root: string,
+): void {
+  const candidatePath = resolve(source.path ?? repositoryCloneSource(source));
+  const rootPath = resolve(root);
+  const relativePath = relative(rootPath, candidatePath);
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${"\\"}`) ||
+    relativePath.startsWith("../")
+  ) {
+    throw new Error("local repository source must be under the configured local repository root");
+  }
+}
+
+export async function assertLocalRepositorySourceWithinRootRealpath(
+  source: LocalRepositorySource,
+  root: string,
+): Promise<void> {
+  const [rootPath, candidatePath] = await Promise.all([
+    realpath(root),
+    realpath(source.path ?? repositoryCloneSource(source)),
+  ]);
+  assertLocalRepositorySourceWithinRoot(
+    { ...source, path: candidatePath, remote: undefined },
+    rootPath,
+  );
 }
 
 export function repositoryMountTarget(source: LocalRepositorySource): string {
