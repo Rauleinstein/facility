@@ -68,7 +68,7 @@ export type AppConfig = {
   logLevel: string;
 };
 
-export type ExternalIdentity = {
+export type GithubExternalIdentity = {
   provider: "github";
   githubUserId: string;
   login: string;
@@ -79,6 +79,20 @@ export type ExternalIdentity = {
   avatarUrl?: string;
   installations: Array<{ installationId: number; accountId: number }>;
 };
+
+/** An OIDC identity with no GitHub claims. It is admitted only into local-mode organizations. */
+export type OidcExternalIdentity = {
+  provider: "oidc";
+  issuer: string;
+  subject: string;
+  email: string;
+  emailVerified: true;
+  verifiedEmails: string[];
+  name?: string;
+  avatarUrl?: string;
+};
+
+export type ExternalIdentity = GithubExternalIdentity | OidcExternalIdentity;
 
 declare module "fastify" {
   interface FastifyInstance {
