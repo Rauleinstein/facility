@@ -5,6 +5,7 @@ import {
   migrate,
   oauthArtifacts,
   orgMembers,
+  orgs,
   seed,
   userIdentities,
   users,
@@ -636,6 +637,160 @@ describe("Facility OAuth resource-server integration", async () => {
     });
     expect(callback.searchParams.get("error"), callback.toString()).toBe("access_denied");
     expect(callback.searchParams.get("code")).toBeNull();
+  });
+
+  describe("organization admission", () => {
+    type Installation = "active" | "suspended" | "none";
+
+    async function member(
+      accessMode: "github" | "local",
+      installation: Installation,
+      status: "active" | "disabled" = "active",
+    ) {
+      const memberOrgId = newId("org");
+      const memberUserId = newId("user");
+      await db.insert(orgs).values({
+        id: memberOrgId,
+        name: `Admission ${memberOrgId}`,
+        slug: `admission-${memberOrgId.slice(-12).toLowerCase()}`,
+        accessMode,
+      });
+      await db.insert(users).values({
+        id: memberUserId,
+        email: `${memberUserId}@example.com`,
+        status,
+      });
+      await db.insert(orgMembers).values({
+        id: newId("member"),
+        orgId: memberOrgId,
+        userId: memberUserId,
+        roleId: "role_bundled_owner",
+      });
+      if (installation !== "none") {
+        await db.insert(githubInstallations).values({
+          id: newId("int"),
+          orgId: memberOrgId,
+          installationId: 7_000_000 + Math.floor(Math.random() * 1_000_000),
+          accountId: 6_000_000,
+          accountLogin: "admission-test",
+          targetType: "Organization",
+          suspendedAt: installation === "suspended" ? new Date() : null,
+        });
+      }
+      return { orgId: memberOrgId, userId: memberUserId };
+    }
+
+    async function me(account: { orgId: string; userId: string }, exp?: number) {
+      return app.inject({
+        method: "GET",
+        url: "/v1/me",
+        headers: {
+          authorization: `Bearer ${await token({ sub: account.userId, orgId: account.orgId, exp })}`,
+        },
+      });
+    }
+
+    it("admits a local-mode organization that has no GitHub installation", async () => {
+      const account = await member("local", "none");
+      const response = await me(account);
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().principal).toMatchObject({ orgId: account.orgId });
+    });
+
+    it("keeps admitting a GitHub organization through an active installation", async () => {
+      const response = await me(await member("github", "active"));
+      expect(response.statusCode, response.body).toBe(200);
+    });
+
+    it.each([
+      ["a GitHub organization whose installation was deleted", "github", "none"],
+      ["a GitHub organization whose installation is suspended", "github", "suspended"],
+      ["a local-mode organization whose installation is suspended", "local", "suspended"],
+    ] as const)("refuses %s", async (_label, accessMode, installation) => {
+      const response = await me(await member(accessMode, installation));
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error.code).toBe("not_provisioned");
+    });
+
+    it("refuses a deactivated member of a local-mode organization", async () => {
+      const response = await me(await member("local", "none", "disabled"));
+      expect(response.statusCode).toBe(403);
+    });
+
+    it("refuses an expired token for a local-mode member", async () => {
+      const response = await me(await member("local", "none"), Math.floor(Date.now() / 1000) - 60);
+      expect(response.statusCode).toBe(401);
+    });
+
+    it("refuses a local-mode member's token that claims another organization", async () => {
+      const account = await member("local", "none");
+      const other = await member("local", "none");
+      const response = await me({ userId: account.userId, orgId: other.orgId });
+      expect(response.statusCode).toBe(403);
+    });
+
+    it("issues MCP tokens to a local-mode member through the authorization server", async () => {
+      const account = await member("local", "none");
+      const proxyHeaders = {
+        host: "api.facility.test",
+        "x-forwarded-host": "api.facility.test",
+        "x-forwarded-proto": "https",
+      };
+      const redirectUri = "http://127.0.0.1:32127/callback";
+      const registration = await app.inject({
+        method: "POST",
+        url: "/oauth/register",
+        headers: proxyHeaders,
+        payload: {
+          client_name: "Local-mode MCP client",
+          redirect_uris: [redirectUri],
+          token_endpoint_auth_method: "none",
+          grant_types: ["authorization_code"],
+          response_types: ["code"],
+        },
+      });
+      expect(registration.statusCode, registration.body).toBe(201);
+      const clientId = registration.json().client_id as string;
+      const verifier = "local-mode-pkce-verifier-".padEnd(64, "x");
+      const code = await completePkceConsent({
+        app,
+        config,
+        userId: account.userId,
+        orgId: account.orgId,
+        proxyHeaders,
+        query: new URLSearchParams({
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          response_type: "code",
+          scope: "openid facility:mcp",
+          resource: audience,
+          state: "local-mode-state",
+          code_challenge: await pkceChallenge(verifier),
+          code_challenge_method: "S256",
+        }),
+      });
+      const exchange = await tokenRequest(app, proxyHeaders, {
+        grant_type: "authorization_code",
+        client_id: clientId,
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
+        resource: audience,
+      });
+      expect(exchange.statusCode, exchange.body).toBe(200);
+      const accessToken = exchange.json().access_token as string;
+      expect(decodeJwt(accessToken)).toMatchObject({
+        sub: account.userId,
+        org_id: account.orgId,
+        scope: "facility:mcp",
+      });
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/me",
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+    });
   });
 });
 

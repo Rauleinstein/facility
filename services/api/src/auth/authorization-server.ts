@@ -1,13 +1,14 @@
-import { githubInstallations, oauthArtifacts, orgMembers, roles, users } from "@facility/db";
+import { oauthArtifacts, orgMembers, roles, users } from "@facility/db";
 import formbody from "@fastify/formbody";
 import middie from "@fastify/middie";
-import { and, eq, isNull, lt } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import Provider from "oidc-provider";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import type { AppConfig } from "../types.js";
 import { oauthAdapterFactory } from "./oauth-adapter.js";
+import { orgAdmitsMembers } from "./org-admission.js";
 
 export const FACILITY_OIDC_SCOPES = ["openid", "offline_access", "email", "profile"] as const;
 export const FACILITY_MCP_SCOPE = "facility:mcp";
@@ -226,16 +227,15 @@ export function oauthScopes(value: unknown) {
 async function activeAccount(app: FastifyInstance, userId: string) {
   return (
     await app.facilityDb
-      .select({ user: users, member: orgMembers, role: roles, installation: githubInstallations })
+      .select({ user: users, member: orgMembers, role: roles })
       .from(orgMembers)
       .innerJoin(users, eq(orgMembers.userId, users.id))
       .innerJoin(roles, eq(orgMembers.roleId, roles.id))
-      .innerJoin(githubInstallations, eq(githubInstallations.orgId, orgMembers.orgId))
       .where(
         and(
           eq(users.id, userId),
           eq(users.status, "active"),
-          isNull(githubInstallations.suspendedAt),
+          orgAdmitsMembers(app.facilityDb, orgMembers.orgId),
         ),
       )
       .orderBy(orgMembers.createdAt)

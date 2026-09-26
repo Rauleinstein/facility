@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -198,6 +199,32 @@ describe("Facility 0.12 database", () => {
         .insert(schema.projectRepositories)
         .values({ ...base, id: `repo_gh2_${suffix}`, owner: "acme", name: "app" }),
     ).rejects.toMatchObject({ cause: { code: "23505" } });
+  });
+
+  it("records local access mode explicitly and defaults existing organizations to GitHub", async () => {
+    const suffix = randomUUID().replaceAll("-", "");
+    const [org] = await db
+      .insert(schema.orgs)
+      .values({ id: `org_mode_${suffix}`, name: "M", slug: `m-${suffix}`, settings: {} })
+      .returning();
+    expect(org?.accessMode).toBe("github");
+    await expect(
+      db.insert(schema.orgs).values({
+        id: `org_mode_bad_${suffix}`,
+        name: "M",
+        slug: `m-bad-${suffix}`,
+        accessMode: "open" as never,
+      }),
+    ).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
+  it("seeds the development organization in local access mode", async () => {
+    await seed(databaseUrl, { includeDemoData: true });
+    const [org] = await db
+      .select({ accessMode: schema.orgs.accessMode })
+      .from(schema.orgs)
+      .where(eq(schema.orgs.slug, "facility-local"));
+    expect(org?.accessMode).toBe("local");
   });
 
   it("rejects cross-organization repository, event, artifact, and preview references", async () => {
