@@ -60,6 +60,8 @@ export const orgs = pgTable("orgs", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   settings: jsonb("settings").notNull().default(sql`'{}'::jsonb`),
+  /** `local` admits members without a GitHub App installation. */
+  accessMode: text("access_mode").notNull().default("github"),
   ...timestamps,
 });
 

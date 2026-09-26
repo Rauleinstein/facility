@@ -50,9 +50,10 @@ async function seedLocalDemo(sql: postgres.Sql): Promise<void> {
   const orgId = "org_local";
   const userId = "user_local_admin";
   await sql`
-    INSERT INTO orgs (id, name, slug, settings)
-    VALUES (${orgId}, 'Facility Local', 'facility-local', '{}'::jsonb)
-    ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
+    INSERT INTO orgs (id, name, slug, settings, access_mode)
+    VALUES (${orgId}, 'Facility Local', 'facility-local', '{}'::jsonb, 'local')
+    ON CONFLICT (slug) DO UPDATE
+      SET name = EXCLUDED.name, access_mode = EXCLUDED.access_mode, updated_at = now()
   `;
   await sql`
     INSERT INTO users (id, email, name, status)
