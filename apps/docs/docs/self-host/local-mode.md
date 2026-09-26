@@ -62,8 +62,17 @@ password. It is supported for local mode only under these conditions, which Faci
   DNS-rebinding pages and other machines on the network.
 
 Because the proxy that serves the UI must connect from loopback, the shortcut is for the
-`pnpm dev` setup. When Facility runs in containers, use GitHub or OIDC sign-in instead. Every API
+`pnpm dev` setup. When Facility runs in containers, use OIDC sign-in instead. Every API
 call still passes the normal role, project-scope, and organization checks.
+
+Local mode is recorded on the organization (`orgs.access_mode = 'local'`). Members of a local-mode
+organization can sign in, authorize MCP clients, and use OAuth access tokens without a GitHub App
+installation. Every other organization still needs an active installation. A suspended
+installation blocks members in either mode. The organization that `pnpm dev` seeds is in local
+mode. To create one without the development seed, run
+`facility instance bootstrap --local` (see the [CLI reference](../reference/cli.md)). Then
+configure `AUTH_IDENTITY_PROVIDER=oidc` with any OIDC provider. An ID token without GitHub claims
+admits the owner by verified email, as described in [authentication](authentication.md).
 
 ## Containers
 

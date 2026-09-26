@@ -40,6 +40,18 @@ FACILITY_INSTANCE_ID=facility-production
 OIDC mode requires issuer, client id, and a stable Facility instance id. The client secret depends
 on the provider. GitHub organization restriction is not accepted in OIDC mode.
 
+An ID token either carries the complete set of GitHub broker claims (`github_user_id`,
+`github_login`, `github_account_id`, `github_installation_id`, and a matching
+`facility_instance_id`) or no `github_*` claim at all. A token with only some of them is refused.
+
+- **With GitHub claims**, sign-in is bound to the GitHub App installation, as with GitHub sign-in.
+- **Without GitHub claims**, any standards-compliant identity provider works. The token must be
+  signed by the issuer, name this client as its audience, echo the login nonce, and carry a
+  verified `email`. If it has a `facility_instance_id`, that must match `FACILITY_INSTANCE_ID`.
+  Such an identity is admitted only into [local-mode](local-mode.md) organizations. The first
+  sign-in matches the verified email to an invited user and links the issuer and `sub`. Later
+  sign-ins use that link, so a changed email at the provider keeps working.
+
 `FACILITY_INSECURE_DEV=1` exposes the local owner shortcut only when both public and web URLs are
 loopback. It is rejected under `NODE_ENV=production` and must never be used through a tunnel.
 
@@ -126,7 +138,9 @@ running inside a preview.
 
 Run `facility instance bootstrap` only after migrations and built-in roles exist. It binds the
 first owner to one GitHub identity and installation under a database advisory lock. Save the input
-identifiers in the operator runbook, not in public logs.
+identifiers in the operator runbook, not in public logs. `facility instance bootstrap --local`
+creates a local-mode organization and owner instead; the owner then signs in through OIDC without
+GitHub claims.
 
 If the identity provider is unavailable, do not enable the insecure development path on a public
 instance. Restore provider service or use an already provisioned administrative API key according

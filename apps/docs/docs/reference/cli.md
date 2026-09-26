@@ -113,5 +113,20 @@ The command takes a PostgreSQL advisory lock. Repeating the exact binding is saf
 it already exists; a different binding against a populated instance is refused. Use `--json` for
 automation and protect `DATABASE_URL` as an administrative secret.
 
+For [local mode](../self-host/local-mode.md) without GitHub, `--local` creates a local-mode
+organization and its owner, with no GitHub identity or installation:
+
+```bash
+DATABASE_URL=postgres://... facility instance bootstrap --local \
+  --org-name='Acme Engineering' \
+  --org-slug=acme \
+  --owner-email=owner@example.com \
+  --owner-name='Repository Owner'
+```
+
+The owner signs in through OIDC with that verified email; see
+[authentication](../self-host/authentication.md). `--local` refuses GitHub flags, and neither form
+of bootstrap converts an instance created by the other.
+
 Run `facility <command> --help` for local usage. Unknown options and missing option values fail
 instead of being ignored.
