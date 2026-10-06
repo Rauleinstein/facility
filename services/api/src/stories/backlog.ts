@@ -8,18 +8,16 @@ import {
   projectRepositories,
   stories,
   storyAssignees,
-  storyEvidenceEvents,
-  turnGitEvidence,
   turns,
   userIdentities,
   users,
   workspaces,
 } from "@facility/db";
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { localReviewSummaries } from "../repositories/local-review.js";
+import type { LocalReviewSummary } from "../repositories/local-review-rules.js";
 import {
   derivePhase,
-  type LocalReviewSummary,
-  localReviewSummary,
   type PhaseReason,
   type PullRequestSummary,
   pickPullRequest,
@@ -436,7 +434,7 @@ export class ProjectBacklogService {
       }
     }
     const localReviewByStory = repositoryRows.some((repository) => repository.source === "local")
-      ? await this.localReviews(orgId, projectId, workspaceByStory)
+      ? await localReviewSummaries(this.db, orgId, projectId, workspaceByStory)
       : new Map<string, LocalReviewSummary | null>();
     const assigneesByStory = new Map<string, typeof assigneeRows>();
     for (const row of assigneeRows) {
@@ -636,81 +634,6 @@ export class ProjectBacklogService {
       });
     }
     return items;
-  }
-
-  /**
-   * Local stories have no pull request; their review state comes from the story
-   * branch head recorded after the latest turn and the review and check evidence.
-   */
-  private async localReviews(
-    orgId: string,
-    projectId: string,
-    workspaceByStory: Map<string, { sourceRevisions: Record<string, { revision: string }> }>,
-  ) {
-    const [heads, events] = await Promise.all([
-      this.db
-        .select({
-          storyId: turnGitEvidence.storyId,
-          sha: turnGitEvidence.finalSha,
-          dirty: turnGitEvidence.dirty,
-        })
-        .from(turnGitEvidence)
-        .where(
-          and(
-            eq(turnGitEvidence.orgId, orgId),
-            eq(turnGitEvidence.projectId, projectId),
-            isNotNull(turnGitEvidence.finalSha),
-          ),
-        )
-        .orderBy(desc(turnGitEvidence.completedAt)),
-      this.db
-        .select({
-          storyId: storyEvidenceEvents.storyId,
-          type: storyEvidenceEvents.type,
-          data: storyEvidenceEvents.data,
-        })
-        .from(storyEvidenceEvents)
-        .where(
-          and(
-            eq(storyEvidenceEvents.orgId, orgId),
-            eq(storyEvidenceEvents.projectId, projectId),
-            inArray(storyEvidenceEvents.type, [
-              "local_review.approved",
-              "local_review.changes_requested",
-              "local_check.completed",
-            ]),
-          ),
-        )
-        .orderBy(desc(storyEvidenceEvents.occurredAt), desc(storyEvidenceEvents.observedAt)),
-    ]);
-    const headByStory = new Map<string, { sha: string; dirty: boolean }>();
-    for (const head of heads) {
-      if (head.sha && !headByStory.has(head.storyId)) {
-        headByStory.set(head.storyId, { sha: head.sha, dirty: head.dirty });
-      }
-    }
-    const eventsByStory = new Map<string, Array<{ type: string; data: Record<string, unknown> }>>();
-    for (const event of events) {
-      const list = eventsByStory.get(event.storyId) ?? [];
-      list.push({ type: event.type, data: event.data as Record<string, unknown> });
-      eventsByStory.set(event.storyId, list);
-    }
-    const summaries = new Map<string, LocalReviewSummary | null>();
-    for (const [storyId, head] of headByStory) {
-      summaries.set(
-        storyId,
-        localReviewSummary({
-          head,
-          imported: Object.values(workspaceByStory.get(storyId)?.sourceRevisions ?? {}).map(
-            (entry) => entry.revision,
-          ),
-          events: (eventsByStory.get(storyId) ?? []) as Parameters<
-            typeof localReviewSummary
-          >[0]["events"],
-        }),
-      );
-    }
-    return summaries;
   }
 
   /** Organization members with their GitHub login, so both sources name the same person. */

@@ -5,10 +5,11 @@ import {
   stories,
   storyEvidenceEvents,
   storyExports,
+  turnGitEvidence,
   turns,
   workspaces,
 } from "@facility/db";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { appendStoryEvidence } from "../stories/evidence.js";
 import { parseGitLog, parseNameStatus } from "../turns/git-evidence.js";
 import {
@@ -18,12 +19,21 @@ import {
   repositoryPath,
 } from "../workspaces/project-environment.js";
 import type { WorkspaceLocator, WorkspaceRuntime } from "../workspaces/runtime.js";
+import {
+  currentChecks,
+  LOCAL_CHECK_COMPLETED,
+  LOCAL_REVIEW_APPROVED,
+  LOCAL_REVIEW_CHANGES_REQUESTED,
+  LOCAL_REVIEW_TYPES,
+  type LocalReviewSummary,
+  latestReview,
+  localReviewSummary,
+} from "./local-review-rules.js";
 import { loadProjectSource, type RepositoryAccess } from "./sources.js";
 
 const MAX_COMMITS = 500;
 const MAX_CHANGED_FILES = 2_000;
 const MAX_EXPORT_BYTES = 256 * 1024 * 1024;
-const REVIEW_TYPES = ["local_review.approved", "local_review.changes_requested"];
 
 export type ReviewActor = { type: "user" | "service" | "system"; id: string };
 
@@ -97,7 +107,7 @@ export class LocalReviewService {
       projectId: input.projectId,
       storyId: input.storyId,
       source: "facility",
-      type: "local_review.approved",
+      type: LOCAL_REVIEW_APPROVED,
       data: {
         repositoryId: context.repository.id,
         branch: state.branch,
@@ -128,7 +138,7 @@ export class LocalReviewService {
       projectId: input.projectId,
       storyId: input.storyId,
       source: "facility",
-      type: "local_review.changes_requested",
+      type: LOCAL_REVIEW_CHANGES_REQUESTED,
       data: {
         repositoryId: context.repository.id,
         branch: state.branch,
@@ -162,7 +172,7 @@ export class LocalReviewService {
         projectId: input.projectId,
         storyId: input.storyId,
         source: "workspace",
-        type: "local_check.completed",
+        type: LOCAL_CHECK_COMPLETED,
         data: {
           repositoryId: context.repository.id,
           commitSha: outcome.commitSha,
@@ -352,7 +362,7 @@ export class LocalReviewService {
     }
     const credentials = await this.credentials.issue(orgId, projectId);
     const repository = credentials.repositories.find((candidate) => candidate.role === "primary");
-    if (repository?.source !== "local" || !repository.id) {
+    if (repository?.source !== "local") {
       throw new LocalReviewError(
         "local_review_unavailable",
         "Local review applies to projects backed by a local repository; GitHub projects review through pull requests",
@@ -404,7 +414,7 @@ export class LocalReviewService {
       workspace,
       locator,
       credentials,
-      repository: { ...repository, id: repository.id },
+      repository,
       imported,
       cwd: repositoryPath(repository),
     };
@@ -451,7 +461,7 @@ export class LocalReviewService {
           and(
             eq(storyEvidenceEvents.orgId, context.orgId),
             eq(storyEvidenceEvents.storyId, context.story.id),
-            inArray(storyEvidenceEvents.type, REVIEW_TYPES),
+            inArray(storyEvidenceEvents.type, LOCAL_REVIEW_TYPES),
           ),
         )
         .orderBy(desc(storyEvidenceEvents.occurredAt), desc(storyEvidenceEvents.observedAt))
@@ -463,7 +473,7 @@ export class LocalReviewService {
           and(
             eq(storyEvidenceEvents.orgId, context.orgId),
             eq(storyEvidenceEvents.storyId, context.story.id),
-            eq(storyEvidenceEvents.type, "local_check.completed"),
+            eq(storyEvidenceEvents.type, LOCAL_CHECK_COMPLETED),
           ),
         )
         .orderBy(desc(storyEvidenceEvents.occurredAt))
@@ -482,36 +492,18 @@ export class LocalReviewService {
         .limit(50),
     ]);
 
-    const latest = reviewRows[0];
-    const latestData = (latest?.data ?? {}) as {
-      commitSha?: string;
-      note?: string;
-      reviewer?: unknown;
-    };
-    const approvalStatus = !latest
+    const review = latestReview(reviewRows);
+    const approvalStatus: "none" | "approved" | "stale" | "changes_requested" = !review
       ? "none"
-      : latest.type === "local_review.changes_requested"
+      : !review.approved
         ? "changes_requested"
-        : latestData.commitSha === branchHead && headSha === branchHead && !dirty
+        : review.data.commitSha === branchHead && headSha === branchHead && !dirty
           ? "approved"
           : "stale";
-
-    const checks = new Map<string, Record<string, unknown>>();
-    for (const row of checkRows) {
-      const data = row.data as {
-        name?: string;
-        commitSha?: string;
-        dirty?: boolean;
-        commitChanged?: boolean;
-      };
-      // A result counts for a commit only if it ran against exactly that clean tree.
-      if (data.dirty || data.commitChanged) continue;
-      if (!data.name || data.commitSha !== branchHead || checks.has(data.name)) continue;
-      checks.set(data.name, {
-        ...(row.data as Record<string, unknown>),
-        recordedAt: row.occurredAt,
-      });
-    }
+    const checks = [...currentChecks(checkRows, branchHead).values()].map(({ event, data }) => ({
+      ...data,
+      recordedAt: event.occurredAt,
+    }));
 
     const blockers: string[] = [];
     if (currentBranch !== context.branch) blockers.push("story_branch_not_checked_out");
@@ -537,14 +529,14 @@ export class LocalReviewService {
       commits,
       changedFiles,
       approval: {
-        status: approvalStatus as "none" | "approved" | "stale" | "changes_requested",
-        commitSha: latestData.commitSha ?? null,
-        note: latestData.note ?? null,
-        reviewer: latestData.reviewer ?? null,
-        reviewedAt: latest?.occurredAt ?? null,
-        eventId: latest?.type === "local_review.approved" ? latest.id : null,
+        status: approvalStatus,
+        commitSha: review?.data.commitSha ?? null,
+        note: review?.data.note ?? null,
+        reviewer: review?.data.reviewer ?? null,
+        reviewedAt: review?.event.occurredAt ?? null,
+        eventId: review?.approved ? review.event.id : null,
       },
-      checks: [...checks.values()],
+      checks,
       exports: exportRows.map((row) => presentExport(row, context.repository.defaultBranch)),
       exportable: blockers.length === 0,
       blockers,
@@ -596,6 +588,77 @@ export class LocalReviewService {
     }
     return result.stdout;
   }
+}
+
+/**
+ * Backlog review state for every story in a local project. Local stories have
+ * no pull request; their review state comes from the story branch head recorded
+ * after the latest turn and the review and check evidence.
+ */
+export async function localReviewSummaries(
+  db: FacilityDb,
+  orgId: string,
+  projectId: string,
+  workspaceByStory: Map<string, { sourceRevisions: Record<string, { revision: string }> }>,
+) {
+  const [heads, events] = await Promise.all([
+    db
+      .select({
+        storyId: turnGitEvidence.storyId,
+        sha: turnGitEvidence.finalSha,
+        dirty: turnGitEvidence.dirty,
+      })
+      .from(turnGitEvidence)
+      .where(
+        and(
+          eq(turnGitEvidence.orgId, orgId),
+          eq(turnGitEvidence.projectId, projectId),
+          isNotNull(turnGitEvidence.finalSha),
+        ),
+      )
+      .orderBy(desc(turnGitEvidence.completedAt)),
+    db
+      .select({
+        storyId: storyEvidenceEvents.storyId,
+        type: storyEvidenceEvents.type,
+        data: storyEvidenceEvents.data,
+      })
+      .from(storyEvidenceEvents)
+      .where(
+        and(
+          eq(storyEvidenceEvents.orgId, orgId),
+          eq(storyEvidenceEvents.projectId, projectId),
+          inArray(storyEvidenceEvents.type, [...LOCAL_REVIEW_TYPES, LOCAL_CHECK_COMPLETED]),
+        ),
+      )
+      .orderBy(desc(storyEvidenceEvents.occurredAt), desc(storyEvidenceEvents.observedAt)),
+  ]);
+  const headByStory = new Map<string, { sha: string; dirty: boolean }>();
+  for (const head of heads) {
+    if (head.sha && !headByStory.has(head.storyId)) {
+      headByStory.set(head.storyId, { sha: head.sha, dirty: head.dirty });
+    }
+  }
+  const eventsByStory = new Map<string, typeof events>();
+  for (const event of events) {
+    const list = eventsByStory.get(event.storyId) ?? [];
+    list.push(event);
+    eventsByStory.set(event.storyId, list);
+  }
+  const summaries = new Map<string, LocalReviewSummary | null>();
+  for (const [storyId, head] of headByStory) {
+    summaries.set(
+      storyId,
+      localReviewSummary({
+        head,
+        imported: Object.values(workspaceByStory.get(storyId)?.sourceRevisions ?? {}).map(
+          (entry) => entry.revision,
+        ),
+        events: eventsByStory.get(storyId) ?? [],
+      }),
+    );
+  }
+  return summaries;
 }
 
 const exportColumns = {

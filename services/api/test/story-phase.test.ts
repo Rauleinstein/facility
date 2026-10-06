@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { localReviewSummary } from "../src/repositories/local-review-rules.js";
 import { mergePersons, searchMatches } from "../src/stories/backlog.js";
 import {
   derivePhase,
-  localReviewSummary,
   pickPullRequest,
   provisionalTitle,
   resolveDefaultAgent,
