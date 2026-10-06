@@ -55,7 +55,7 @@ describe("loopback-only local development login", async () => {
     await Promise.all(apps.map((app) => app.close()));
   });
 
-  async function appFor(insecure: boolean) {
+  async function appFor(insecure: boolean, auth: Partial<AppConfig> = {}) {
     const port = await unusedPort();
     const config: AppConfig = {
       databaseUrl,
@@ -67,6 +67,7 @@ describe("loopback-only local development login", async () => {
       workspaceDriver: "docker",
       facilityInsecureDev: insecure,
       logLevel: "silent",
+      ...auth,
     };
     const app = await buildApp(config, { rateLimitMax: 10_000 });
     apps.push(app);
@@ -127,5 +128,41 @@ describe("loopback-only local development login", async () => {
     expect(response.json()).toEqual({
       error: { code: "not_found", message: "Route not found" },
     });
+  });
+
+  it("advertises only the sign-in methods this instance offers", async () => {
+    const cases: Array<[boolean, Partial<AppConfig>, unknown]> = [
+      [true, {}, { local: true, external: null }],
+      [false, {}, { local: false, external: null }],
+      [
+        true,
+        { githubOauthClientId: "client", githubOauthClientSecret: "secret" },
+        { local: true, external: "github" },
+      ],
+      [
+        false,
+        { githubOauthClientId: "client", githubOauthClientSecret: "secret" },
+        { local: false, external: "github" },
+      ],
+      // A half-configured GitHub client cannot complete a login, so it is not offered.
+      [false, { githubOauthClientId: "client" }, { local: false, external: null }],
+      [
+        false,
+        {
+          authIdentityProvider: "oidc",
+          oidcIssuer: "http://127.0.0.1:9/issuer",
+          oidcClientId: "client",
+          facilityInstanceId: "instance",
+        },
+        { local: false, external: "oidc" },
+      ],
+    ];
+    for (const [insecure, auth, expected] of cases) {
+      const app = await appFor(insecure, auth);
+      const response = await app.inject({ method: "GET", url: "/auth/methods" });
+      expect(response.statusCode, JSON.stringify({ insecure, auth })).toBe(200);
+      expect(response.json()).toEqual(expected);
+      expect(response.cookies).toEqual([]);
+    }
   });
 });
