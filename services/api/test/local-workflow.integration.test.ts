@@ -538,6 +538,13 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
     });
     expect(otherTenant.statusCode).toBe(404);
 
+    // Without a pull request, local review is what puts the story in the review lane.
+    const phase = async () =>
+      (await api("GET", `/v1/projects/${projectId}/backlog?phase=all`))
+        .json()
+        .items.find((item: { story?: { id: string } }) => item.story?.id === storyId);
+    expect(await phase()).toMatchObject({ phase: "review", reason: "awaiting_review" });
+
     const approved = await api("POST", review("/approve"), {
       commit_sha: body.headSha,
       note: "Looks right",
@@ -547,6 +554,7 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
       approval: { status: "approved", commitSha: body.headSha, note: "Looks right" },
       exportable: true,
     });
+    expect(await phase()).toMatchObject({ phase: "review", reason: "approved" });
   });
 
   it("runs configured checks against the tested commit", async () => {
