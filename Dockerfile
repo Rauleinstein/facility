@@ -88,6 +88,12 @@ RUN test -f /prod/api/node_modules/@facility/db/migrations/v0.12/0001_facility_0
 # --- api (also serves the worker via `node dist/worker.js`) ---
 FROM runtime AS api
 ENV NODE_ENV=production
+# Local repositories are read with the git CLI (read-only and hardened; see
+# services/api/src/repositories/local.ts). The api and worker both need it.
+RUN apt-get -o Acquire::https::CAInfo=/etc/ssl/certs/ca-certificates.crt -o APT::Update::Error-Mode=any update \
+  && apt-get -o Acquire::https::CAInfo=/etc/ssl/certs/ca-certificates.crt install -y --no-install-recommends git \
+  && rm -rf /var/lib/apt/lists/* \
+  && git --version
 COPY --from=build-api /prod/api /app
 # Validate the final runtime filesystem, after the build workspaces are gone.
 # This catches portable-deploy regressions that a build-stage file check cannot.

@@ -49,7 +49,10 @@ const EnvSchema = z
         .regex(/^\s*\d+(?:\s*,\s*\d+)*\s*$/, "must be comma-separated numeric user ids")
         .optional(),
     ),
-    FACILITY_LOCAL_SNAPSHOT_MAX_BYTES: z.coerce.number().int().positive().optional(),
+    FACILITY_LOCAL_SNAPSHOT_MAX_BYTES: z.preprocess(
+      (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+      z.coerce.number().int().positive().optional(),
+    ),
     FACILITY_LOCAL_GIT_NAME: OptionalNonEmpty,
     FACILITY_LOCAL_GIT_EMAIL: z.preprocess(
       (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
