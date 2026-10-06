@@ -13,7 +13,6 @@ import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { appendStoryEvidence } from "../stories/evidence.js";
 import { parseGitLog, parseNameStatus } from "../turns/git-evidence.js";
 import {
-  localSourceRef,
   type ProjectEnvironmentService,
   type ProjectManifestSource,
   repositoryPath,
@@ -29,6 +28,7 @@ import {
   latestReview,
   localReviewSummary,
 } from "./local-review-rules.js";
+import { type LocalWorkspaceSource, localSourceRef } from "./local-workspace.js";
 import { loadProjectSource, type RepositoryAccess } from "./sources.js";
 
 const MAX_COMMITS = 500;
@@ -61,6 +61,7 @@ export class LocalReviewService {
     private readonly credentials: RepositoryAccess,
     private readonly manifests: ProjectManifestSource,
     private readonly environment: ProjectEnvironmentService,
+    private readonly localWorkspace: LocalWorkspaceSource,
   ) {}
 
   async state(
@@ -194,14 +195,16 @@ export class LocalReviewService {
     const context = await this.context(input.orgId, input.projectId, input.storyId);
     await this.assertIdle(context);
     const manifest = await this.manifests.load(input.orgId, input.projectId);
-    const refreshed = await this.environment.refreshLocalSource({
-      orgId: input.orgId,
-      projectId: input.projectId,
-      workspace: context.locator,
-      manifest,
-      credentials: context.credentials,
-      repositoryId: input.repositoryId ?? context.repository.id,
-    });
+    const refreshed = await this.localWorkspace.refresh(
+      this.environment.workspaceGit({
+        orgId: input.orgId,
+        projectId: input.projectId,
+        workspace: context.locator,
+        manifest,
+        credentials: context.credentials,
+      }),
+      input.repositoryId ?? context.repository.id,
+    );
     await appendStoryEvidence(this.db, {
       orgId: input.orgId,
       projectId: input.projectId,

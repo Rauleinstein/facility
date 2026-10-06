@@ -5,14 +5,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { isLocalAlias } from "../src/repositories/local.js";
 import { newFilesPatch } from "../src/repositories/local-kickstart.js";
+import { base64Chunks, localSourceRef } from "../src/repositories/local-workspace.js";
 import {
   DEFAULT_LOCAL_GIT_IDENTITY,
   ProjectRepositoryAccess,
   projectSource,
 } from "../src/repositories/sources.js";
 import {
-  base64Chunks,
-  localSourceRef,
   manifestRepositoryName,
   ProjectEnvironmentError,
   parseProjectManifest,

@@ -13,6 +13,7 @@ import { GithubWorkspaceCredentialBroker } from "./github/workspace-credentials.
 import { CostBudgetService } from "./insights/costs.js";
 import { LocalRepositoryHost } from "./repositories/local.js";
 import { LocalReviewService } from "./repositories/local-review.js";
+import { LocalWorkspaceSource } from "./repositories/local-workspace.js";
 import {
   LocalAgentCatalogSource,
   LocalProjectManifestSource,
@@ -119,6 +120,7 @@ export function createStoryDomain(input: {
     new GithubProjectManifestSource(input.db, githubFactory),
     new LocalProjectManifestSource(localRepositories),
   );
+  const localWorkspace = new LocalWorkspaceSource(input.db, runtime, localRepositories);
   const variables = new WorkspaceVariablesService(input.db, input.config.secretMasterKey);
   const environment = new ProjectEnvironmentService(
     input.db,
@@ -126,7 +128,7 @@ export function createStoryDomain(input: {
     undefined,
     undefined,
     (scope) => variables.values(scope),
-    localRepositories,
+    localWorkspace,
   );
   const localReview = new LocalReviewService(
     input.db,
@@ -134,6 +136,7 @@ export function createStoryDomain(input: {
     credentials,
     projectManifests,
     environment,
+    localWorkspace,
   );
   const stories = new StoryWorkspaceService(input.db, runtime, async (turn) => {
     await input.enqueue("turns.dispatch", {

@@ -1,8 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { newId } from "@facility/core";
 import type { FacilityDb } from "@facility/db";
 import { githubInstallations, projectRepositories, storyArtifacts, workspaces } from "@facility/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { FacilityGithubClient, type GithubClientFactory } from "../github/client.js";
@@ -108,16 +108,6 @@ export type ProjectManifest = z.infer<typeof ProjectManifestSchema> & {
   /** Local sources: the primary repository commit this manifest was read from. */
   sourceRevision?: { repositoryId: string; commitSha: string };
 };
-
-/** Packages committed local history for import into a workspace. */
-export interface LocalSnapshotProvider {
-  snapshot(
-    orgId: string,
-    projectId: string,
-    repositoryId: string,
-    commit?: string,
-  ): Promise<{ commit: string; branch: string; bundle: Buffer; warnings: string[] }>;
-}
 
 export type LocalCheckResult = {
   name: string;
@@ -256,6 +246,81 @@ export class GithubProjectManifestSource implements ProjectManifestSource {
   }
 }
 
+/** Commands bound to one workspace preparation, for repository sources. */
+export type WorkspaceGit = {
+  orgId: string;
+  projectId: string;
+  workspace: WorkspaceLocator;
+  manifest: ProjectManifest;
+  repositories: WorkspaceRepository[];
+  /** Runs a command and throws an environment failure, with redacted output, if it fails. */
+  run(
+    command: string,
+    args: string[],
+    cwd: string,
+    phase: string,
+    stdin?: string,
+  ): Promise<WorkspaceCommandResult>;
+  /** Runs a command and returns its result whatever the exit code. */
+  probe(command: string, args: string[], cwd?: string): Promise<WorkspaceCommandResult>;
+};
+
+/** How a repository's history gets into a workspace and where story branches start. */
+export interface WorkspaceRepositorySource {
+  /** Brings the repository at `cwd` up to date; `present` says a Git directory exists there. */
+  materialize(
+    git: WorkspaceGit,
+    repository: WorkspaceRepository,
+    cwd: string,
+    present: boolean,
+  ): Promise<void>;
+  /** `git switch -c <branch>` arguments after the branch name, for a new story branch. */
+  storyBranchStart(
+    git: WorkspaceGit,
+    repository: WorkspaceRepository,
+    cwd: string,
+    branch: string,
+  ): Promise<string[]>;
+}
+
+/** A GitHub repository: cloned once, fetched before every turn, branches tracked from origin. */
+class GithubWorkspaceSource implements WorkspaceRepositorySource {
+  constructor(private readonly gitBaseUrl: string) {}
+
+  async materialize(
+    git: WorkspaceGit,
+    repository: WorkspaceRepository,
+    cwd: string,
+    present: boolean,
+  ) {
+    if (!present) {
+      await git.run(
+        "git",
+        ["clone", `${this.gitBaseUrl}/${repository.owner}/${repository.name}.git`, cwd],
+        ".",
+        `clone ${repository.owner}/${repository.name}`,
+      );
+    }
+    await git.run("git", ["fetch", "--all", "--prune"], cwd, "git fetch");
+  }
+
+  async storyBranchStart(
+    git: WorkspaceGit,
+    repository: WorkspaceRepository,
+    cwd: string,
+    branch: string,
+  ) {
+    const remote = await git.probe(
+      "git",
+      ["show-ref", "--verify", `refs/remotes/origin/${branch}`],
+      cwd,
+    );
+    return remote.exitCode === 0
+      ? ["--track", `origin/${branch}`]
+      : [`origin/${repository.defaultBranch}`];
+  }
+}
+
 type EnvironmentInput = {
   orgId: string;
   projectId: string;
@@ -266,10 +331,15 @@ type EnvironmentInput = {
 };
 
 export class ProjectEnvironmentService {
+  private readonly sources: Record<
+    WorkspaceRepository["source"],
+    WorkspaceRepositorySource | undefined
+  >;
+
   constructor(
     private readonly db: FacilityDb,
     private readonly runtime: WorkspaceRuntime,
-    private readonly gitBaseUrl = "https://github.com",
+    gitBaseUrl = "https://github.com",
     private readonly environmentValue: (projectId: string, name: string) => string | undefined = (
       projectId,
       name,
@@ -279,8 +349,10 @@ export class ProjectEnvironmentService {
       projectId: string;
       workspaceId: string;
     }) => Promise<Record<string, string>> = async () => ({}),
-    private readonly localSnapshots?: LocalSnapshotProvider,
-  ) {}
+    localSource?: WorkspaceRepositorySource,
+  ) {
+    this.sources = { github: new GithubWorkspaceSource(gitBaseUrl), local: localSource };
+  }
 
   async prepare(
     input: EnvironmentInput & {
@@ -292,6 +364,7 @@ export class ProjectEnvironmentService {
     assertRepositoryContract(input.manifest, input.credentials.repositories);
     const preparedInput = await this.withDeclaredEnvironment(input);
     await this.run(preparedInput, "mkdir -p repos", ".", "environment.repositories");
+    const git = this.workspaceGit(preparedInput);
     for (const repository of preparedInput.credentials.repositories) {
       await this.runCommand(
         preparedInput,
@@ -301,58 +374,8 @@ export class ProjectEnvironmentService {
         "repository directory",
       );
       const cwd = repositoryPath(repository);
-      const present = await this.runtime.exec(preparedInput.workspace, {
-        command: "git",
-        args: ["-C", cwd, "rev-parse", "--git-dir"],
-        env: preparedInput.credentials.environment,
-      });
-      if (repository.source === "local") {
-        // Later turns keep the workspace's history. Refreshing from the host is explicit.
-        // The source ref, not the directory, marks a completed import: an interrupted
-        // import leaves an empty repository that must be imported again.
-        const imported =
-          present.exitCode === 0 &&
-          (
-            await this.runtime.exec(preparedInput.workspace, {
-              command: "git",
-              args: [
-                "-C",
-                cwd,
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                `${localSourceRef(repository)}^{commit}`,
-              ],
-              env: preparedInput.credentials.environment,
-            })
-          ).exitCode === 0;
-        if (!imported) {
-          const pinned = preparedInput.manifest.sourceRevision;
-          await this.importLocal(
-            preparedInput,
-            repository,
-            cwd,
-            pinned && pinned.repositoryId === repository.id ? pinned.commitSha : undefined,
-          );
-        }
-      } else {
-        if (present.exitCode !== 0) {
-          await this.runCommand(
-            preparedInput,
-            "git",
-            ["clone", `${this.gitBaseUrl}/${repository.owner}/${repository.name}.git`, cwd],
-            ".",
-            `clone ${repository.owner}/${repository.name}`,
-          );
-        }
-        await this.runCommand(
-          preparedInput,
-          "git",
-          ["fetch", "--all", "--prune"],
-          cwd,
-          "git fetch",
-        );
-      }
+      const present = await git.probe("git", ["-C", cwd, "rev-parse", "--git-dir"]);
+      await this.source(repository).materialize(git, repository, cwd, present.exitCode === 0);
       await this.runCommand(
         preparedInput,
         "git",
@@ -367,7 +390,9 @@ export class ProjectEnvironmentService {
         cwd,
         "git identity",
       );
-      if (repository.role === "primary") await this.ensureBranch(preparedInput, repository, cwd);
+      if (repository.role === "primary") {
+        await this.ensureBranch(preparedInput, git, repository, cwd);
+      }
     }
 
     const setupChecksum = await this.setupChecksum(preparedInput);
@@ -645,172 +670,61 @@ export class ProjectEnvironmentService {
 
   private async ensureBranch(
     input: Parameters<ProjectEnvironmentService["prepare"]>[0],
+    git: WorkspaceGit,
     repository: WorkspaceRepository,
     cwd: string,
   ) {
     if (!isSafeGitBranch(input.branch)) {
       throw new ProjectEnvironmentError("story_branch_invalid", "story branch is invalid");
     }
-    const local = await this.runtime.exec(input.workspace, {
-      command: "git",
-      args: ["show-ref", "--verify", `refs/heads/${input.branch}`],
+    const local = await git.probe(
+      "git",
+      ["show-ref", "--verify", `refs/heads/${input.branch}`],
       cwd,
-      env: input.credentials.environment,
-    });
-    if (repository.source === "local") {
-      // A local story branch starts at the imported source commit and is never reset.
-      await this.runCommand(
-        input,
-        "git",
-        local.exitCode === 0
-          ? ["switch", input.branch]
-          : ["switch", "-c", input.branch, localSourceRef(repository)],
-        cwd,
-        "git branch",
-      );
-      return;
-    }
-    const remote = await this.runtime.exec(input.workspace, {
-      command: "git",
-      args: ["show-ref", "--verify", `refs/remotes/origin/${input.branch}`],
-      cwd,
-      env: input.credentials.environment,
-    });
-    await this.runCommand(
-      input,
+    );
+    await git.run(
       "git",
       local.exitCode === 0
         ? ["switch", input.branch]
-        : remote.exitCode === 0
-          ? ["switch", "-c", input.branch, "--track", `origin/${input.branch}`]
-          : ["switch", "-c", input.branch, `origin/${repository.defaultBranch}`],
+        : [
+            "switch",
+            "-c",
+            input.branch,
+            ...(await this.source(repository).storyBranchStart(git, repository, cwd, input.branch)),
+          ],
       cwd,
       "git branch",
     );
   }
 
-  /**
-   * Imports a pinned local commit into a new workspace repository. The host
-   * repository is only read; history arrives as a Git bundle and the imported
-   * commit is recorded on the workspace.
-   */
-  private async importLocal(
-    input: EnvironmentInput,
-    repository: WorkspaceRepository,
-    cwd: string,
-    revision?: string,
-  ) {
-    const snapshot = await this.localSnapshot(input, repository, revision);
-    await this.runCommand(input, "git", ["init", "--quiet", cwd], ".", "local import");
-    await this.fetchLocalBundle(input, repository, cwd, snapshot.bundle);
-    // Story branches live under facility/. A default branch named `facility` (or
-    // inside facility/) would block them, so it is not materialized; the imported
-    // source ref remains the base either way.
-    await this.runCommand(
-      input,
-      "git",
-      storyNamespaceConflict(repository.defaultBranch)
-        ? ["checkout", "--quiet", "--detach", localSourceRef(repository)]
-        : ["checkout", "--quiet", "-B", repository.defaultBranch, localSourceRef(repository)],
-      cwd,
-      "local import",
-    );
-    await this.recordSourceRevision(input, repository, snapshot.commit);
-    await appendWorkspaceEvent(this.db, input.workspace.id, input.orgId, "source.imported", {
-      repositoryId: repository.id,
-      repository: repository.name,
-      branch: repository.defaultBranch,
-      revision: snapshot.commit,
-      warnings: snapshot.warnings,
-    });
+  private source(repository: WorkspaceRepository) {
+    const source = this.sources[repository.source];
+    if (!source) {
+      throw new ProjectEnvironmentError(
+        "local_repositories_disabled",
+        "Local repositories are not enabled on this Facility instance",
+      );
+    }
+    return source;
   }
 
-  /**
-   * Explicitly imports the local repository's current default-branch commit as the
-   * workspace's new source base. The story branch is never moved; the workspace's
-   * copy of the default branch only fast-forwards when it has not diverged.
-   */
-  async refreshLocalSource(input: EnvironmentInput & { repositoryId: string }) {
-    const repository = input.credentials.repositories.find(
-      (candidate) => candidate.id === input.repositoryId && candidate.source === "local",
-    );
-    if (!repository) {
-      throw new ProjectEnvironmentError(
-        "local_repository_not_found",
-        "Local repository not found in this project",
-      );
-    }
-    const cwd = repositoryPath(repository);
-    const previous = (await this.sourceRevisions(input))[input.repositoryId];
-    if (!previous) {
-      throw new ProjectEnvironmentError(
-        "workspace_not_prepared",
-        "The workspace has not imported this repository yet; start a turn first",
-      );
-    }
-    const snapshot = await this.localSnapshot(input, repository);
-    if (snapshot.commit === previous.revision) {
-      return {
-        previous: previous.revision,
-        revision: snapshot.commit,
-        defaultBranchUpdated: false,
-        diverged: false,
-      };
-    }
-    await this.fetchLocalBundle(input, repository, cwd, snapshot.bundle);
-    // A rewritten host history must never rewind the workspace's default branch.
-    const diverged =
-      (
-        await this.runtime.exec(input.workspace, {
-          command: "git",
-          args: ["merge-base", "--is-ancestor", previous.revision, snapshot.commit],
+  /** Commands bound to one workspace and its credentials, for repository sources. */
+  workspaceGit(input: EnvironmentInput): WorkspaceGit {
+    return {
+      orgId: input.orgId,
+      projectId: input.projectId,
+      workspace: input.workspace,
+      manifest: input.manifest,
+      repositories: input.credentials.repositories,
+      run: (command, args, cwd, phase, stdin) =>
+        this.runCommand(input, command, args, cwd, phase, stdin),
+      probe: (command, args, cwd) =>
+        this.runtime.exec(input.workspace, {
+          command,
+          args,
           cwd,
           env: input.credentials.environment,
-        })
-      ).exitCode !== 0;
-    const current = (
-      await this.runtime.exec(input.workspace, {
-        command: "git",
-        args: ["branch", "--show-current"],
-        cwd,
-        env: input.credentials.environment,
-      })
-    ).stdout.trim();
-    const updated = diverged
-      ? { exitCode: 1 }
-      : current === repository.defaultBranch
-        ? await this.runtime.exec(input.workspace, {
-            command: "git",
-            args: ["merge", "--ff-only", "--quiet", localSourceRef(repository)],
-            cwd,
-            env: input.credentials.environment,
-          })
-        : await this.runtime.exec(input.workspace, {
-            command: "git",
-            args: [
-              "update-ref",
-              `refs/heads/${repository.defaultBranch}`,
-              snapshot.commit,
-              previous.revision,
-            ],
-            cwd,
-            env: input.credentials.environment,
-          });
-    await this.recordSourceRevision(input, repository, snapshot.commit, previous.initialRevision);
-    await appendWorkspaceEvent(this.db, input.workspace.id, input.orgId, "source.refreshed", {
-      repositoryId: repository.id,
-      repository: repository.name,
-      previous: previous.revision,
-      revision: snapshot.commit,
-      defaultBranchUpdated: updated.exitCode === 0,
-      diverged,
-      warnings: snapshot.warnings,
-    });
-    return {
-      previous: previous.revision,
-      revision: snapshot.commit,
-      defaultBranchUpdated: updated.exitCode === 0,
-      diverged,
+        }),
     };
   }
 
@@ -845,117 +759,6 @@ export class ProjectEnvironmentService {
     }
     const after = await this.gitOutput(preparedInput, cwd, ["rev-parse", "HEAD"]);
     return { commitSha, dirty, commitChanged: after !== commitSha, results };
-  }
-
-  async sourceRevisions(input: { orgId: string; workspace: WorkspaceLocator }) {
-    const row = (
-      await this.db
-        .select({ sourceRevisions: workspaces.sourceRevisions })
-        .from(workspaces)
-        .where(and(eq(workspaces.orgId, input.orgId), eq(workspaces.id, input.workspace.id)))
-        .limit(1)
-    )[0];
-    return row?.sourceRevisions ?? {};
-  }
-
-  private async localSnapshot(
-    input: EnvironmentInput,
-    repository: WorkspaceRepository,
-    revision?: string,
-  ) {
-    if (!this.localSnapshots) {
-      throw new ProjectEnvironmentError(
-        "local_repositories_disabled",
-        "Local repositories are not enabled on this Facility instance",
-      );
-    }
-    if (this.runtime.provider === "vercel") {
-      throw new ProjectEnvironmentError(
-        "local_source_requires_docker",
-        "Local repositories run in Docker workspaces; set FACILITY_WORKSPACE_DRIVER=docker",
-      );
-    }
-    return this.localSnapshots.snapshot(input.orgId, input.projectId, repository.id, revision);
-  }
-
-  private async fetchLocalBundle(
-    input: EnvironmentInput,
-    repository: WorkspaceRepository,
-    cwd: string,
-    bundle: Buffer,
-  ) {
-    const staging = `.facility/imports/${randomUUID()}`;
-    await this.runCommand(
-      input,
-      "sh",
-      ["-c", 'mkdir -p .facility/imports && : > "$1.b64"', "sh", staging],
-      ".",
-      "local import",
-    );
-    try {
-      // Encoding chunk by chunk keeps every string small: a repository bundle can
-      // exceed V8's maximum string length once base64-encoded as a whole.
-      for (const chunk of base64Chunks(bundle)) {
-        const appended = await this.runtime.exec(input.workspace, {
-          command: "sh",
-          args: ["-c", 'cat >> "$1.b64"', "sh", staging],
-          stdin: chunk,
-          timeoutMs: 10 * 60 * 1_000,
-        });
-        if (appended.exitCode !== 0) throw commandFailure("local import", "stage bundle", appended);
-      }
-      await this.runCommand(
-        input,
-        "sh",
-        ["-c", 'base64 -d "$1.b64" > "$1.bundle"', "sh", staging],
-        ".",
-        "local import",
-      );
-      const depth = cwd.split("/").length;
-      await this.runCommand(
-        input,
-        "git",
-        [
-          "fetch",
-          "--quiet",
-          "--no-tags",
-          `${"../".repeat(depth)}${staging}.bundle`,
-          `+refs/facility/import:${localSourceRef(repository)}`,
-        ],
-        cwd,
-        "local import",
-      );
-    } finally {
-      await this.runtime
-        .exec(input.workspace, {
-          command: "rm",
-          args: ["-f", `${staging}.b64`, `${staging}.bundle`],
-        })
-        .catch(() => undefined);
-    }
-  }
-
-  private async recordSourceRevision(
-    input: EnvironmentInput,
-    repository: WorkspaceRepository,
-    revision: string,
-    initialRevision = revision,
-  ) {
-    const entry = {
-      [repository.id]: {
-        revision,
-        initialRevision,
-        branch: repository.defaultBranch,
-        importedAt: new Date().toISOString(),
-      },
-    };
-    await this.db
-      .update(workspaces)
-      .set({
-        sourceRevisions: sql`${workspaces.sourceRevisions} || ${JSON.stringify(entry)}::jsonb`,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(workspaces.orgId, input.orgId), eq(workspaces.id, input.workspace.id)));
   }
 
   private async gitOutput(input: EnvironmentInput, cwd: string, args: string[]) {
@@ -1019,12 +822,14 @@ export class ProjectEnvironmentService {
     args: string[],
     cwd: string,
     phase: string,
+    stdin?: string,
   ) {
     const result = await this.runtime.exec(input.workspace, {
       command,
       args,
       cwd,
       env: input.credentials.environment,
+      stdin,
       timeoutMs: 30 * 60 * 1_000,
     });
     if (result.exitCode !== 0) {
@@ -1035,19 +840,6 @@ export class ProjectEnvironmentService {
       );
     }
     return result;
-  }
-}
-
-/**
- * Base64 encodes a buffer in pieces whose concatenation equals encoding it whole.
- * Raw slices are a multiple of 3 bytes, so no piece carries padding except the last.
- */
-export function* base64Chunks(buffer: Buffer, rawChunkBytes = 3 * 1024 * 1024) {
-  if (rawChunkBytes <= 0 || rawChunkBytes % 3 !== 0) {
-    throw new RangeError("base64 chunks must be a positive multiple of 3 bytes");
-  }
-  for (let offset = 0; offset < buffer.length; offset += rawChunkBytes) {
-    yield buffer.subarray(offset, offset + rawChunkBytes).toString("base64");
   }
 }
 
@@ -1065,10 +857,6 @@ export function manifestRepositoryName(
   return repository.source === "local"
     ? `local:${repository.name}`
     : `${repository.owner}/${repository.name}`;
-}
-
-export function localSourceRef(repository: Pick<WorkspaceRepository, "defaultBranch">) {
-  return `refs/facility/source/${repository.defaultBranch}`;
 }
 
 function assertRepositoryContract(manifest: ProjectManifest, repositories: WorkspaceRepository[]) {
@@ -1114,11 +902,6 @@ function services(manifest: ProjectManifest): PreviewEndpoint[] {
     ...value,
     url: "",
   }));
-}
-
-/** True when a branch name would occupy the ref namespace story branches are created in. */
-export function storyNamespaceConflict(branch: string) {
-  return branch === "facility" || branch.startsWith("facility/");
 }
 
 function commandFailure(phase: string, command: string, result: WorkspaceCommandResult) {

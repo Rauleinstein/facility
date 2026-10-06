@@ -13,7 +13,6 @@ import type {
   WorkspaceRepository,
 } from "../github/workspace-credentials.js";
 import {
-  type LocalSnapshotProvider,
   type PinnedRevisions,
   ProjectEnvironmentError,
   type ProjectManifest,
@@ -25,6 +24,7 @@ import {
   LocalRepositoryError,
   type LocalRepositoryHost,
 } from "./local.js";
+import type { LocalSnapshotProvider } from "./local-workspace.js";
 
 export { DEFAULT_LOCAL_GIT_IDENTITY };
 

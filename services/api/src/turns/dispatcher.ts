@@ -13,7 +13,9 @@ import {
 import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { type AgentCatalogService, manifestFromProjection } from "../agents/catalog.js";
 import { githubRateLimitRetryAt } from "../github/rate-limit.js";
+import type { WorkspaceRepository } from "../github/workspace-credentials.js";
 import { CostBudgetService } from "../insights/costs.js";
+import { workspaceSourceRevisions } from "../repositories/local-workspace.js";
 import type { RepositoryAccess } from "../repositories/sources.js";
 import type { StoryWorkspaceService } from "../stories/service.js";
 import type {
@@ -217,10 +219,11 @@ export class TurnDispatcher {
         previousSetupChecksum: workspace.setupChecksum,
       });
       secrets = credentialSecrets(prepared.processEnvironment, prepared.secretNames);
-      const localSource = credential.repositories.some(
-        (repository) => repository.source === "local",
-      );
-      if (localSource) {
+      // A project's repositories share one source.
+      const source = credential.repositories.some((repository) => repository.source === "local")
+        ? "local"
+        : "github";
+      if (source === "local") {
         // Evidence of exactly which host commit and configuration this turn ran against.
         await appendTurnEvent(this.db, {
           ...eventBase,
@@ -229,10 +232,7 @@ export class TurnDispatcher {
             source: "local",
             projectManifestHash: projectManifest.hash,
             configurationRevision: projectManifest.sourceRevision ?? null,
-            sourceRevisions: await this.environment.sourceRevisions({
-              orgId: input.orgId,
-              workspace: workspaceLocator(workspace),
-            }),
+            sourceRevisions: await workspaceSourceRevisions(this.db, input.orgId, workspace.id),
           },
         });
       }
@@ -322,7 +322,7 @@ export class TurnDispatcher {
         turnId: turn.id,
         manifest,
         workspace: workspaceLocator(workspace),
-        prompt: buildPrompt(manifest, story, conversation.summary, messages, turn.id, localSource),
+        prompt: buildPrompt(manifest, story, conversation.summary, messages, turn.id, source),
         cwd: prepared.primaryCwd,
         nativeSessionId: session?.nativeSessionId,
         environment: prepared.processEnvironment,
@@ -793,13 +793,21 @@ function workspaceLocator(row: typeof workspaces.$inferSelect): WorkspaceLocator
   };
 }
 
+/** What the agent may do with the repository, by where the repository comes from. */
+const SOURCE_INSTRUCTIONS: Record<WorkspaceRepository["source"], string> = {
+  github:
+    "Continue in the existing worktree. You have full workspace, network, Docker, browser, git, and GitHub maintainer access. Preserve useful uncommitted work. Commit and push coherent changes when the task calls for it. Never merge the pull request or publish packages.",
+  local:
+    "Continue in the existing worktree. You have full workspace, network, Docker, browser, and git access. This is a local repository copy with no remote and no GitHub access: do not push, open pull requests, or run gh. Preserve useful uncommitted work. Commit coherent changes to the current story branch when the task calls for it; a person reviews and exports the commits. Never publish packages.",
+};
+
 function buildPrompt(
   manifest: AgentManifest,
   story: typeof stories.$inferSelect,
   summary: string | null,
   messages: Array<typeof storyMessages.$inferSelect>,
   turnId: string,
-  localSource = false,
+  source: WorkspaceRepository["source"],
 ) {
   const currentSequence = messages.find(
     (message) => message.turnId === turnId && message.role === "user",
@@ -817,9 +825,7 @@ function buildPrompt(
     `# Story\n${story.title}\nExternal identity: ${story.provider}:${story.externalId}`,
     summary ? `# Conversation summary\n${summary}` : "",
     `# Shared conversation\n${truncateStart(transcript, 120_000)}`,
-    localSource
-      ? "Continue in the existing worktree. You have full workspace, network, Docker, browser, and git access. This is a local repository copy with no remote and no GitHub access: do not push, open pull requests, or run gh. Preserve useful uncommitted work. Commit coherent changes to the current story branch when the task calls for it; a person reviews and exports the commits. Never publish packages."
-      : "Continue in the existing worktree. You have full workspace, network, Docker, browser, git, and GitHub maintainer access. Preserve useful uncommitted work. Commit and push coherent changes when the task calls for it. Never merge the pull request or publish packages.",
+    SOURCE_INSTRUCTIONS[source],
     "If you cannot continue without a human answer, end with exactly <facility-needs-attention>your concise question</facility-needs-attention>. Do not use that marker for a recoverable command or environment failure.",
   ]
     .filter(Boolean)
