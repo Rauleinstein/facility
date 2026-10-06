@@ -378,8 +378,24 @@ describe("workspace variables: authenticated API, encryption, and process delive
     expect((await service.values(future)).SHARED_KEY).toBe("rotated-project");
     const [storedProject] = await db.select().from(projects).where(eq(projects.id, projectId));
     expect(JSON.stringify(storedProject?.environmentSecrets)).not.toContain("rotated-project");
-    for (const url of [`/v1/projects/${projectId}`, "/v1/projects"]) {
-      const read = await app.inject({ method: "GET", url, headers: { cookie } });
+    // The shared test organization accumulates projects across runs, so page the
+    // list until this one appears rather than assuming it is on the first page.
+    const listed = async () => {
+      for (let offset = 0; ; offset += 200) {
+        const page = await app.inject({
+          method: "GET",
+          url: `/v1/projects?limit=200&offset=${offset}`,
+          headers: { cookie },
+        });
+        const rows = page.json() as Array<{ id: string }>;
+        if (rows.some((row) => row.id === projectId) || rows.length < 200) return page;
+      }
+    };
+    for (const url of [`/v1/projects/${projectId}`, "list"]) {
+      const read =
+        url === "list"
+          ? await listed()
+          : await app.inject({ method: "GET", url, headers: { cookie } });
       expect(read.statusCode).toBe(200);
       const details = Array.isArray(read.json())
         ? read.json().find((p: { id: string }) => p.id === projectId)

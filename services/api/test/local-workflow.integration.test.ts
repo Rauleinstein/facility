@@ -71,7 +71,8 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
   const approved = join(base, "approved");
   const outside = join(base, "outside");
   const repository = join(approved, `app-${suffix}`);
-  const orgId = "org_local";
+  // Its own local-mode organization: the suite never adds to the shared demo org.
+  const orgId = newId("org");
   const projectId = newId("proj");
   const githubProjectId = newId("proj");
   const otherOrgId = newId("org");
@@ -207,17 +208,13 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
     await writeFile(join(repository, "README.md"), "# app (uncommitted edit)\n");
     await writeFile(join(repository, "notes.local"), "untracked\n");
 
-    // A fresh database seeded without demo data has no local-mode organization yet.
-    await db
-      .insert(orgs)
-      .values({
-        id: orgId,
-        name: "Local",
-        slug: "facility-local",
-        settings: {},
-        accessMode: "local",
-      })
-      .onConflictDoNothing();
+    await db.insert(orgs).values({
+      id: orgId,
+      name: "Local",
+      slug: `local-${suffix}`,
+      settings: {},
+      accessMode: "local",
+    });
     await db.insert(orgs).values({
       id: otherOrgId,
       name: "Other tenant",
