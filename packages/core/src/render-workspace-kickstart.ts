@@ -59,8 +59,8 @@ export function renderWorkspaceKickstart(
     BUILD_MODEL: answers.models?.build ?? "claude-fable-5",
     REVIEW_MODEL: answers.models?.review ?? "claude-sonnet-5",
     PLAN_MODEL: answers.models?.plan ?? "claude-opus-4-8",
-    CODEX_BUILD_MODEL: answers.models?.codexBuild ?? "gpt-6-luna",
-    CODEX_PLAN_MODEL: answers.models?.codexPlan ?? "gpt-6-luna",
+    CODEX_BUILD_MODEL: answers.models?.codexBuild ?? "gpt-5.6-sol",
+    CODEX_PLAN_MODEL: answers.models?.codexPlan ?? "gpt-5.6-sol",
   };
   const root = templateRoot();
   const candidates = [
