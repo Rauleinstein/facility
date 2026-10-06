@@ -7,7 +7,7 @@ import { z } from "zod";
 import { AgentCatalogError } from "../../agents/catalog.js";
 import { ApiError, notFound } from "../../errors.js";
 import { COMMIT_SHA, isLocalAlias, LocalRepositoryError } from "../../repositories/local.js";
-import { localKickstart } from "../../repositories/local-kickstart.js";
+import { createLocalKickstartBranch, localKickstart } from "../../repositories/local-kickstart.js";
 import { LocalReviewError } from "../../repositories/local-review.js";
 import { LOCAL_REPOSITORY_OWNER } from "../../repositories/sources.js";
 import { ProjectEnvironmentError } from "../../workspaces/project-environment.js";
@@ -201,6 +201,35 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
         domain.localRepositories.repository(actor.orgId, projectId, repoId),
       );
       return translate(() => localKickstart(host(), repository, body.answers));
+    },
+  );
+
+  app.post(
+    "/v1/projects/:projectId/repos/:repoId/local-kickstart/branch",
+    {
+      config: { permission: "projects:kickstart", auditAction: "project.kickstarted" },
+      schema: {
+        params: RepositoryParams,
+        body: z.object({ answers: KickstartAnswers.default({}) }),
+        operationId: "createLocalKickstartBranch",
+      },
+    },
+    async (request) => {
+      const actor = principal(request);
+      const { projectId, repoId } = request.params as z.infer<typeof RepositoryParams>;
+      const body = request.body as { answers: z.infer<typeof KickstartAnswers> };
+      await activeProject(db, actor.orgId, projectId);
+      const repository = await translate(() =>
+        domain.localRepositories.repository(actor.orgId, projectId, repoId),
+      );
+      return translate(() =>
+        createLocalKickstartBranch(
+          host(),
+          repository,
+          body.answers,
+          context.config.localGitIdentity,
+        ),
+      );
     },
   );
 

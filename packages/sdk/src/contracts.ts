@@ -434,7 +434,18 @@ export type LocalKickstart = {
   };
   files: Array<{ path: string; content: string; mode: "100644" }>;
   skipped: string[];
+  /** The branch `createLocalKickstartBranch` creates with these files. */
+  branch: string;
+  /** Fallback for repositories Facility may not write to, with its `git apply` steps. */
   patch: string;
+  instructions: string[];
+};
+export type LocalKickstartBranch = {
+  branch: string;
+  baseSha: string;
+  commitSha: string;
+  files: string[];
+  /** Review-and-merge steps, run inside the repository. */
   instructions: string[];
 };
 export type LocalReviewActor = { type: "user" | "service" | "system"; id: string };

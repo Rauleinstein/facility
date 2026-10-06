@@ -405,18 +405,17 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
     expect(claimed.json().error.code).toBe("local_repository_claimed");
   });
 
-  it("proposes starter configuration as a local patch instead of a pull request", async () => {
+  it("previews starter configuration, then creates a kickstart branch on request", async () => {
     const repo = (
       await db
         .select()
         .from(projectRepositories)
         .where(eq(projectRepositories.projectId, projectId))
     )[0];
-    const kickstart = await api(
-      "POST",
-      `/v1/projects/${projectId}/repos/${repo?.id}/local-kickstart`,
-      { answers: { startCmd: "pnpm dev" } },
-    );
+    const url = `/v1/projects/${projectId}/repos/${repo?.id}/local-kickstart`;
+    const refsBefore = await git(repository, ["for-each-ref"]);
+    const statusBefore = await git(repository, ["status", "--porcelain"]);
+    const kickstart = await api("POST", url, { answers: { startCmd: "pnpm dev" } });
     expect(kickstart.statusCode, kickstart.body).toBe(200);
     const body = kickstart.json();
     // Existing project-owned files are never proposed again.
@@ -425,11 +424,62 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
       ".agents/architect.md",
       ".agents/reviewer.md",
     ]);
+    expect(body.branch).toBe("facility/kickstart");
     const clone = join(base, "kickstart-clone");
     await git(base, ["clone", "-q", repository, clone]);
     await writeFile(join(base, "kickstart.patch"), body.patch);
     await git(clone, ["apply", "--check", join(base, "kickstart.patch")]);
-    expect(await git(repository, ["status", "--porcelain"])).not.toContain(".agents/architect.md");
+    // The preview writes nothing.
+    expect(await git(repository, ["for-each-ref"])).toBe(refsBefore);
+
+    // Readers, other tenants, and malformed requests cannot create the branch.
+    const branchUrl = `${url}/branch`;
+    const viewer = { authorization: `Bearer ${viewerSecret}` };
+    expect((await api("POST", branchUrl, {}, viewer)).statusCode).toBe(403);
+    expect((await api("POST", branchUrl, {}, {})).statusCode).toBe(401);
+    const crossTenant = await api(
+      "POST",
+      `/v1/projects/${otherOrgProjectId}/repos/${repo?.id}/local-kickstart/branch`,
+      {},
+      { authorization: `Bearer ${otherOrgSecret}` },
+    );
+    expect(crossTenant.statusCode).toBe(404);
+    expect(
+      (await api("POST", branchUrl, { answers: { servicePort: "not-a-port" } })).statusCode,
+    ).toBe(400);
+    expect(await git(repository, ["for-each-ref"])).toBe(refsBefore);
+
+    // Like the GitHub kickstart PR: a branch the user reviews and merges.
+    const created = await api("POST", branchUrl, { answers: { startCmd: "pnpm dev" } });
+    expect(created.statusCode, created.body).toBe(200);
+    const branch = created.json();
+    expect(branch).toMatchObject({
+      branch: "facility/kickstart",
+      baseSha: body.baseSha,
+      files: [".agents/architect.md", ".agents/reviewer.md"],
+    });
+    expect((await git(repository, ["rev-parse", "facility/kickstart"])).trim()).toBe(
+      branch.commitSha,
+    );
+    expect((await git(repository, ["rev-parse", "facility/kickstart^"])).trim()).toBe(body.baseSha);
+    expect(await git(repository, ["diff", "--name-only", body.baseSha, "facility/kickstart"])).toBe(
+      ".agents/architect.md\n.agents/reviewer.md",
+    );
+    expect(branch.instructions).toContain("git merge facility/kickstart");
+    // The dirty checkout, its HEAD, and the default branch are untouched.
+    expect(await git(repository, ["status", "--porcelain"])).toBe(statusBefore);
+    expect((await git(repository, ["rev-parse", "HEAD"])).trim()).toBe(body.baseSha);
+    expect(await readFile(join(repository, "README.md"), "utf8")).toBe(
+      "# app (uncommitted edit)\n",
+    );
+
+    // A repeat never overwrites the branch.
+    const replay = await api("POST", branchUrl, { answers: { startCmd: "pnpm dev" } });
+    expect(replay.statusCode).toBe(409);
+    expect(replay.json().error.code).toBe("local_repository_branch_exists");
+    expect((await git(repository, ["rev-parse", "facility/kickstart"])).trim()).toBe(
+      branch.commitSha,
+    );
 
     const githubKickstart = await api(
       "GET",
@@ -457,6 +507,9 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
 
   it("runs an agent turn in an imported workspace without GitHub credentials", async () => {
     const hostHead = await git(repository, ["rev-parse", "HEAD"]);
+    // Only the kickstart branch the user asked for; turns never create host branches.
+    const hostBranches = await git(repository, ["branch", "--list", "facility/*"]);
+    expect(hostBranches).toBe("facility/kickstart");
     const started = await api("POST", `/v1/projects/${projectId}/workspace-stories`, {
       title: "Add a feature",
       message: "Add feature one",
@@ -512,7 +565,7 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
       "# app (uncommitted edit)\n",
     );
     expect(await git(repository, ["rev-parse", "HEAD"])).toBe(hostHead);
-    expect(await git(repository, ["branch", "--list", "facility/*"])).toBe("");
+    expect(await git(repository, ["branch", "--list", "facility/*"])).toBe(hostBranches);
   });
 
   it("shows committed changes for review and ties approval to one commit", async () => {

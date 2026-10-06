@@ -1,6 +1,15 @@
 import { renderWorkspaceKickstart } from "@facility/core";
 import { detectWorkspace, inferStartCommand, type KickstartAnswers } from "../github/kickstart.js";
-import type { LocalRepositoryHost, LocalSourceRefObject } from "./local.js";
+import {
+  DEFAULT_LOCAL_GIT_IDENTITY,
+  LocalRepositoryError,
+  type LocalRepositoryHost,
+  type LocalSourceRefObject,
+} from "./local.js";
+
+/** The branch kickstart creates, mirroring the GitHub kickstart PR branch. */
+export const LOCAL_KICKSTART_BRANCH = "facility/kickstart";
+const LOCAL_KICKSTART_MESSAGE = "feat: configure Facility local workflow";
 
 const DETECTION_FILES = [
   "package.json",
@@ -15,8 +24,10 @@ const DETECTION_FILES = [
 ];
 
 /**
- * Starter configuration for a local repository, returned as a patch the user
- * reviews and applies in their own checkout. Facility writes nothing to it.
+ * Starter configuration for a local repository, previewed without writing
+ * anything. `createLocalKickstartBranch` commits the same files to a new
+ * branch, the local counterpart of the GitHub kickstart PR; the patch remains
+ * for repositories Facility may not write to.
  */
 export async function localKickstart(
   host: LocalRepositoryHost,
@@ -53,12 +64,49 @@ export async function localKickstart(
     files: rendered.files,
     skipped: rendered.skipped,
     manifest: rendered.manifest,
+    branch: LOCAL_KICKSTART_BRANCH,
     patch: newFilesPatch(rendered.files),
     instructions: [
       "git apply --check facility-kickstart.patch",
       "git apply facility-kickstart.patch",
       "git add .facility.yml .agents",
-      'git commit -m "feat: configure Facility local workflow"',
+      `git commit -m "${LOCAL_KICKSTART_MESSAGE}"`,
+    ],
+  };
+}
+
+/**
+ * Commits the starter files to `facility/kickstart` on top of the default
+ * branch. Refuses when the branch exists, so a repeat never overwrites it.
+ */
+export async function createLocalKickstartBranch(
+  host: LocalRepositoryHost,
+  repository: { name: string; defaultBranch: string } & LocalSourceRefObject,
+  answers: KickstartAnswers,
+  author: { name: string; email: string } = DEFAULT_LOCAL_GIT_IDENTITY,
+) {
+  const preview = await localKickstart(host, repository, answers);
+  if (preview.files.length === 0) {
+    throw new LocalRepositoryError(
+      "local_kickstart_complete",
+      "The repository already has .facility.yml and its agents",
+      409,
+    );
+  }
+  const { commitSha } = await host.createBranch(repository, preview.baseSha, {
+    branch: LOCAL_KICKSTART_BRANCH,
+    message: LOCAL_KICKSTART_MESSAGE,
+    author,
+    files: preview.files,
+  });
+  return {
+    branch: LOCAL_KICKSTART_BRANCH,
+    baseSha: preview.baseSha,
+    commitSha,
+    files: preview.files.map((file) => file.path),
+    instructions: [
+      `git log --stat ${repository.defaultBranch}..${LOCAL_KICKSTART_BRANCH}`,
+      `git merge ${LOCAL_KICKSTART_BRANCH}`,
     ],
   };
 }

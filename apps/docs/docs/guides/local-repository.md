@@ -18,10 +18,13 @@ An operator must enable local repositories first; see [Local mode](../self-host/
 ## What Facility imports
 
 Facility imports **committed history from the default branch only**. Uncommitted edits and
-untracked files in your checkout are never copied. Facility never writes to your repository: it
-reads committed objects into its own staging copy and packages them as a Git bundle for the
-workspace. Repository hooks, `core.fsmonitor`, and system or global Git configuration are ignored
-while it reads.
+untracked files in your checkout are never copied. Facility reads committed objects into its own
+staging copy and packages them as a Git bundle for the workspace. Repository hooks,
+`core.fsmonitor`, and system or global Git configuration are ignored.
+
+Facility never changes your working tree, your index, `HEAD`, or an existing branch. Its only
+write is creating a new `facility/*` branch when you ask for one, and it refuses if that branch
+already exists. Clean filters, hooks, and commit signing never run while it writes.
 
 Submodules and Git LFS content are not imported yet. Registration and each import report them
 explicitly; submodule directories appear empty and LFS files appear as pointer files.
@@ -46,9 +49,19 @@ repositories, never both, and one organization owns a given host path.
 
 ## 2. Add the starter configuration
 
-Facility proposes starter configuration as a patch rather than a pull request. The UI shows the
-patch after registration; the API returns it from
-`POST /v1/projects/:projectId/repos/:repoId/local-kickstart`. You can also write the files
+Facility proposes starter configuration the way the GitHub kickstart opens a pull request. After
+registration, the UI lists the files it would add. **Create branch facility/kickstart** commits
+them on top of your default branch, in your repository, without checking anything out. Review and
+merge it like any branch:
+
+```bash
+git log --stat main..facility/kickstart
+git merge facility/kickstart
+```
+
+If the branch already exists, Facility refuses rather than overwrite it; merge or delete it first.
+When Facility cannot write to the repository, for example through a read-only container mount,
+use the `git apply` patch offered under **Use a patch instead**. You can also write the files
 directly:
 
 ```bash
@@ -57,7 +70,7 @@ facility init --local=shop --start="pnpm dev"
 
 Both produce `.facility.yml` with `primary: local:shop` and three agents (`architect`, `builder`,
 and `reviewer`) that commit to the story branch and never push, open pull requests, or run `gh`.
-Review the files, then commit them on the default branch. Facility reads only committed
+Review the files, then merge or commit them on the default branch. Facility reads only committed
 configuration.
 
 Add `environment.checks` to run named checks against a story's exact commit during review:

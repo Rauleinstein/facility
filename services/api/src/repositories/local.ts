@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdtempSync } from "node:fs";
-import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize, relative, sep } from "node:path";
 import { isSafeGitBranch } from "../workspaces/git-branch.js";
@@ -58,12 +58,13 @@ const GIT_TIMEOUT_MS = 120_000;
 export const COMMIT_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 /**
- * Read-only access to Git repositories on the machine running Facility.
+ * Access to Git repositories on the machine running Facility.
  *
  * Every operation re-validates the stored canonical path against the approved
  * roots, so a path replaced by a symlink after registration is refused. Git runs
  * with system/global configuration ignored, hooks and fsmonitor disabled, and
- * replace objects ignored; Facility never writes to the source repository.
+ * replace objects ignored. Facility never changes the working tree, the index or
+ * an existing branch; its only write is `createBranch`, on request.
  */
 export class LocalRepositoryHost {
   private readonly roots: string[];
@@ -219,6 +220,84 @@ export class LocalRepositoryHost {
         );
       }
       return await readFile(bundle);
+    } finally {
+      await rm(stage, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * The one write Facility makes to a source repository: a new branch holding
+   * one commit of new files on top of `base`. Objects are added and a ref that
+   * does not exist yet is created; the working tree, the index, HEAD and every
+   * existing ref stay untouched. Filters, hooks and signing never run.
+   */
+  async createBranch(
+    source: LocalSourceRef,
+    base: string,
+    proposal: {
+      branch: string;
+      message: string;
+      author: { name: string; email: string };
+      files: Array<{ path: string; content: string }>;
+    },
+  ): Promise<{ commitSha: string }> {
+    const path = await this.open(source);
+    assertCommit(base);
+    if (!proposal.branch.startsWith("facility/") || !isSafeGitBranch(proposal.branch)) {
+      throw new LocalRepositoryError(
+        "local_repository_branch_invalid",
+        "Facility only creates branches under facility/",
+      );
+    }
+    if (proposal.files.length === 0) {
+      throw new LocalRepositoryError("local_repository_commit_empty", "There is nothing to commit");
+    }
+    const ref = `refs/heads/${proposal.branch}`;
+    const exists = await this.git(path, ["rev-parse", "--verify", "--quiet", ref], {
+      okExitCodes: [1],
+    });
+    if (exists.trim()) throw branchExists(proposal.branch);
+    const stage = await mkdtemp(join(tmpdir(), "facility-local-branch-"));
+    try {
+      // A private index: the user's index and working tree are never read or written.
+      const env = { GIT_INDEX_FILE: join(stage, "index") };
+      await this.git(path, ["read-tree", base], { env });
+      for (const [index, file] of proposal.files.entries()) {
+        const content = join(stage, `blob-${index}`);
+        await writeFile(content, file.content);
+        const oid = (
+          await this.git(path, ["hash-object", "-w", "--no-filters", "--", content])
+        ).trim();
+        await this.git(
+          path,
+          ["update-index", "--add", "--cacheinfo", `100644,${oid},${file.path}`],
+          { env },
+        );
+      }
+      const tree = (await this.git(path, ["write-tree"], { env })).trim();
+      const identity = {
+        GIT_AUTHOR_NAME: proposal.author.name,
+        GIT_AUTHOR_EMAIL: proposal.author.email,
+        GIT_COMMITTER_NAME: proposal.author.name,
+        GIT_COMMITTER_EMAIL: proposal.author.email,
+      };
+      const commitSha = (
+        await this.git(
+          path,
+          ["commit-tree", "--no-gpg-sign", tree, "-p", base, "-m", proposal.message],
+          { env: identity },
+        )
+      ).trim();
+      // An empty old value makes Git refuse if the ref appeared since the check above.
+      try {
+        await this.git(path, ["update-ref", "-m", "facility: create branch", ref, commitSha, ""]);
+      } catch (error) {
+        const raced = await this.git(path, ["rev-parse", "--verify", "--quiet", ref], {
+          okExitCodes: [1],
+        });
+        throw raced.trim() ? branchExists(proposal.branch) : error;
+      }
+      return { commitSha };
     } finally {
       await rm(stage, { recursive: true, force: true });
     }
@@ -461,7 +540,11 @@ export class LocalRepositoryHost {
     return this.git(path, ["cat-file", "blob", oid]);
   }
 
-  private git(cwd: string, args: string[], options: { okExitCodes?: number[] } = {}) {
+  private git(
+    cwd: string,
+    args: string[],
+    options: { okExitCodes?: number[]; env?: Record<string, string> } = {},
+  ) {
     return new Promise<string>((resolve, reject) => {
       execFile(
         "git",
@@ -476,7 +559,7 @@ export class LocalRepositoryHost {
         ],
         {
           cwd,
-          env: hardenedGitEnvironment(),
+          env: { ...hardenedGitEnvironment(), ...options.env },
           encoding: "utf8",
           maxBuffer: this.maxFileBytes * 4 + 64 * 1024 * 1024,
           timeout: GIT_TIMEOUT_MS,
@@ -510,6 +593,14 @@ export function isInside(root: string, path: string) {
   return (
     difference === "" ||
     (difference !== ".." && !difference.startsWith(`..${sep}`) && !isAbsolute(difference))
+  );
+}
+
+function branchExists(branch: string) {
+  return new LocalRepositoryError(
+    "local_repository_branch_exists",
+    `Branch ${branch} already exists; merge or delete it first`,
+    409,
   );
 }
 

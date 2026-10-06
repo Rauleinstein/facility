@@ -85,9 +85,13 @@ admits the owner by verified email, as described in [authentication](authenticat
 
 To run the Compose stack in local mode, mount each approved root at the same path in the `api` and
 `worker` services, list it in `FACILITY_LOCAL_REPOSITORY_ROOTS`, and set
-`FACILITY_LOCAL_REPOSITORY_OWNER_UIDS` to the user id that owns the repositories on the host. Use
-read-only mounts: Facility only reads source repositories. The `api` image includes the `git`
-client that both services use to read them.
+`FACILITY_LOCAL_REPOSITORY_OWNER_UIDS` to the user id that owns the repositories on the host. The
+`api` image includes the `git` client that both services use.
+
+Facility's only write to a source repository is creating a new `facility/*` branch when a user
+asks, such as the kickstart branch. Mount the roots read-only to rule that out: branch creation
+then fails, and users apply the kickstart patch themselves. A writable mount should run the
+containers as the user that owns the repositories, so new Git objects keep that owner.
 
 ```yaml
 services:
