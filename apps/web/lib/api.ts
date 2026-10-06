@@ -36,6 +36,7 @@ export type {
   KickstartResult,
   LocalExport,
   LocalKickstart,
+  LocalKickstartBranch,
   LocalRepositoryRegistration,
   LocalRepositoryStatus,
   LocalReviewState,
