@@ -709,7 +709,9 @@ export async function registerStoryWorkspaceRoutes(app: FastifyInstance, config:
           throw new ApiError(409, "workspace_deleted", "Workspace has been deleted");
         }
         const workspaceRow = bundle.workspace;
-        const manifest = await translate(() => domain.projectManifests.load(orgId, projectId));
+        const manifest = await translate(() =>
+          domain.projectManifests.load(orgId, projectId, workspaceRow.sourceRevisions),
+        );
         // Validate before issuing credentials, waking compute, or touching the workspace.
         if (action === "browser-test" && !manifest.environment.browser_test) {
           throw new ApiError(

@@ -584,6 +584,10 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
     expect(state.blockers).toContain("uncommitted_changes");
     const approve = await api("POST", review("/approve"), { commit_sha: state.headSha });
     expect(approve.json().error.code).toBe("uncommitted_changes");
+    // A check run over uncommitted files is not evidence for the commit.
+    const checked = await api("POST", review("/checks"));
+    expect(checked.statusCode, checked.body).toBe(200);
+    expect(checked.json().checks).toEqual([]);
     // The next revision commits the draft together with its own change.
     expect((await send("Commit everything")).state).toBe("succeeded");
     expect((await api("GET", review())).json().dirty).toBe(false);
@@ -660,17 +664,35 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
       join(base, "story.patch"),
     ]);
     expect(await git(clone, ["ls-files"])).toContain("feature-1.txt");
+    expect(record.patchInstructions[0]).toBe(
+      `git switch -c ${record.reviewBranch} ${state.baseSha}`,
+    );
+    // Agent commits carry the local identity, never a GitHub account.
+    expect(await git(repository, ["log", "-1", "--format=%an <%ae>", record.reviewBranch])).toBe(
+      "Facility Agent <facility-agent@localhost>",
+    );
 
     // Exporting is not merging; the workspace stays available for further revisions.
     const after = (await api("GET", review())).json();
     expect(after.exports).toHaveLength(1);
     expect(after.approval.status).toBe("approved");
+
+    // A later commit makes the approval stale rather than silently exportable.
+    expect((await send("One more change")).state).toBe("succeeded");
+    const moved = (await api("GET", review())).json();
+    expect(moved.approval).toMatchObject({ status: "stale", commitSha: state.headSha });
+    expect((await api("POST", review("/exports"))).json().error.code).toBe("approval_stale");
   });
 
   it("refreshes from the host explicitly without moving the story branch", async () => {
     const before = (await api("GET", review())).json();
     await writeFile(join(repository, "shared.txt"), "host change\n");
-    await git(repository, ["add", "shared.txt"]);
+    // The host's configuration changes too; the running story keeps the imported one.
+    await writeFile(
+      join(repository, ".facility.yml"),
+      manifest(`app-${suffix}`).replace("test -f feature-1.txt", "test -f never.txt"),
+    );
+    await git(repository, ["add", "shared.txt", ".facility.yml"]);
     await git(repository, [
       "-c",
       "user.name=Host",
@@ -687,6 +709,20 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
     expect((await send("Add another feature")).state).toBe("succeeded");
     const unrefreshed = (await api("GET", review())).json();
     expect(unrefreshed.sourceRevision).toBe(before.sourceRevision);
+    const lastTurn = engine.requests.at(-1)?.turnId ?? "";
+    const sourceEvent = (
+      await db
+        .select()
+        .from(turnEvents)
+        .where(and(eq(turnEvents.turnId, lastTurn), eq(turnEvents.type, "turn.source")))
+    )[0];
+    expect(sourceEvent?.data).toMatchObject({
+      configurationRevision: { commitSha: before.sourceRevision },
+    });
+    const pinnedChecks = (await api("POST", review("/checks"))).json();
+    expect(pinnedChecks.checks).toEqual([
+      expect.objectContaining({ name: "feature", exitCode: 0, command: "test -f feature-1.txt" }),
+    ]);
 
     const refreshed = await api("POST", review("/refresh-source"), {});
     expect(refreshed.statusCode, refreshed.body).toBe(200);
@@ -900,6 +936,39 @@ describe("local repository workflow", { timeout: docker ? 600_000 : 60_000 }, as
       repository: { defaultBranch: "facility" },
     });
     expect(story.json().commits).toHaveLength(1);
+  });
+
+  it("never rewinds the workspace's default branch when the host history is rewritten", async () => {
+    const locator = engine.requests[0]?.workspace as WorkspaceLocator;
+    const cwd = engine.requests[0]?.cwd;
+    const workspaceMain = async () =>
+      (
+        await runtime.exec(locator, { command: "git", args: ["rev-parse", "main"], cwd })
+      ).stdout.trim();
+    const before = (await api("GET", review())).json();
+    const mainBefore = await workspaceMain();
+    expect(mainBefore).toBe(before.sourceRevision);
+    await git(repository, ["reset", "-q", "--hard", "HEAD~1"]);
+    await writeFile(join(repository, "rewritten.txt"), "rewritten\n");
+    await git(repository, ["add", "rewritten.txt"]);
+    await git(repository, [
+      "-c",
+      "user.name=Host",
+      "-c",
+      "user.email=host@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "rewritten history",
+    ]);
+    const refreshed = await api("POST", review("/refresh-source"), {});
+    expect(refreshed.statusCode, refreshed.body).toBe(200);
+    expect(refreshed.json().refresh).toMatchObject({
+      diverged: true,
+      defaultBranchUpdated: false,
+    });
+    expect(await workspaceMain()).toBe(mainBefore);
+    expect(refreshed.json().headSha).toBe(before.headSha);
   });
 
   it("never requires GitHub credentials to execute a local turn (regression)", async () => {

@@ -23,6 +23,12 @@ export type LocalRepositoryInspection = {
   warnings: string[];
 };
 
+/** Author of agent commits in local workspaces unless FACILITY_LOCAL_GIT_* overrides it. */
+export const DEFAULT_LOCAL_GIT_IDENTITY = {
+  name: "Facility Agent",
+  email: "facility-agent@localhost",
+};
+
 /** The name a local repository is registered under and referenced by as `local:<alias>`. */
 export function isLocalAlias(value: string) {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value) && !/\.git$/i.test(value);

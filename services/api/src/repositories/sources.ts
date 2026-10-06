@@ -14,23 +14,25 @@ import type {
 } from "../github/workspace-credentials.js";
 import {
   type LocalSnapshotProvider,
+  type PinnedRevisions,
   ProjectEnvironmentError,
   type ProjectManifest,
   type ProjectManifestSource,
   parseProjectManifest,
 } from "../workspaces/project-environment.js";
-import { LocalRepositoryError, type LocalRepositoryHost } from "./local.js";
+import {
+  DEFAULT_LOCAL_GIT_IDENTITY,
+  LocalRepositoryError,
+  type LocalRepositoryHost,
+} from "./local.js";
+
+export { DEFAULT_LOCAL_GIT_IDENTITY };
 
 export type RepositorySource = "github" | "local";
 export type ProjectRepositoryRow = typeof projectRepositories.$inferSelect;
 
 /** Local repositories share one owner sentinel that GitHub logins cannot use. */
 export const LOCAL_REPOSITORY_OWNER = "_local";
-
-export const DEFAULT_LOCAL_GIT_IDENTITY: GithubGitIdentity = {
-  name: "Facility Agent",
-  email: "facility-agent@localhost",
-};
 
 /** Repository access that a workspace needs before preparation. */
 export interface RepositoryAccess {
@@ -154,12 +156,17 @@ export class LocalRepositorySnapshots implements LocalSnapshotProvider {
   }
 }
 
-/** Reads `.facility.yml` from the primary repository's default branch at one pinned commit. */
+/**
+ * Reads `.facility.yml` from the primary repository at one commit: the story's
+ * imported revision when there is one, otherwise the default branch's head.
+ */
 export class LocalProjectManifestSource implements ProjectManifestSource {
   constructor(private readonly snapshots: LocalRepositorySnapshots) {}
 
-  async load(orgId: string, projectId: string): Promise<ProjectManifest> {
-    const { row, commit } = await this.snapshots.resolve(orgId, projectId);
+  async load(orgId: string, projectId: string, pinned?: PinnedRevisions): Promise<ProjectManifest> {
+    const row = await this.snapshots.repository(orgId, projectId);
+    const commit =
+      pinned?.[row.id]?.revision ?? (await this.snapshots.host.resolve(row, row.defaultBranch));
     const source = await this.snapshots.host.readFile(row, commit, ".facility.yml");
     if (source === undefined) {
       throw new ProjectEnvironmentError(
@@ -224,9 +231,9 @@ export class SourceAwareProjectManifestSource implements ProjectManifestSource {
     private readonly local: ProjectManifestSource,
   ) {}
 
-  async load(orgId: string, projectId: string) {
+  async load(orgId: string, projectId: string, pinned?: PinnedRevisions) {
     return (await loadProjectSource(this.db, orgId, projectId)) === "local"
-      ? this.local.load(orgId, projectId)
+      ? this.local.load(orgId, projectId, pinned)
       : this.github.load(orgId, projectId);
   }
 }

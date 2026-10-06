@@ -243,6 +243,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
         domain.localReview.approve(
           { orgId: actor.orgId, projectId, storyId, commitSha: body.commit_sha, note: body.note },
           reviewActor(actor),
+          { wake: can(actor.permissions, "workspaces:execute") },
         ),
       );
     },
@@ -266,6 +267,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
         domain.localReview.requestChanges(
           { orgId: actor.orgId, projectId, storyId, commitSha: body.commit_sha, note: body.note },
           reviewActor(actor),
+          { wake: can(actor.permissions, "workspaces:execute") },
         ),
       );
     },

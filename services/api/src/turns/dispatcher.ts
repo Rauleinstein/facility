@@ -150,7 +150,7 @@ export class TurnDispatcher {
       });
       const [credential, projectManifest] = await Promise.all([
         this.credentials.issue(input.orgId, input.projectId),
-        this.projectManifests.load(input.orgId, input.projectId),
+        this.projectManifests.load(input.orgId, input.projectId, workspace.sourceRevisions),
       ]);
       if (this.runtime?.diagnostics) {
         const diagnostics = this.runtime.diagnostics.bind(this.runtime);

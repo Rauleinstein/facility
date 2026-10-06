@@ -82,7 +82,7 @@ export class WorkspacePreviewService {
     }
     const [credentials, manifest] = await Promise.all([
       this.credentials.issue(input.orgId, input.projectId),
-      this.manifests.load(input.orgId, input.projectId),
+      this.manifests.load(input.orgId, input.projectId, workspace.sourceRevisions),
     ]);
     const branch = story.branch ?? `facility/story-${story.id.slice(-8)}`;
     if (!story.branch) {

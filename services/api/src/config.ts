@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
 import { registeredSite } from "./origin-isolation.js";
-import { parseLocalRepositoryRoots } from "./repositories/local.js";
+import { DEFAULT_LOCAL_GIT_IDENTITY, parseLocalRepositoryRoots } from "./repositories/local.js";
 import type { AppConfig } from "./types.js";
 import { parsePreviewSites } from "./workspaces/preview-sites.js";
 
@@ -310,8 +310,8 @@ export function readConfig(env = process.env): AppConfig {
     localGitIdentity:
       parsed.FACILITY_LOCAL_GIT_NAME || parsed.FACILITY_LOCAL_GIT_EMAIL
         ? {
-            name: parsed.FACILITY_LOCAL_GIT_NAME ?? "Facility Agent",
-            email: parsed.FACILITY_LOCAL_GIT_EMAIL ?? "facility-agent@localhost",
+            name: parsed.FACILITY_LOCAL_GIT_NAME ?? DEFAULT_LOCAL_GIT_IDENTITY.name,
+            email: parsed.FACILITY_LOCAL_GIT_EMAIL ?? DEFAULT_LOCAL_GIT_IDENTITY.email,
           }
         : undefined,
     publicUrl: parsed.PUBLIC_URL,
