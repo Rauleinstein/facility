@@ -59,11 +59,18 @@ password. It is supported for local mode only under these conditions, which Faci
 - `PUBLIC_URL` and `WEB_URL` must be loopback URLs;
 - the connection must come from a loopback address; and
 - the browser-facing host must be `localhost`, `127.0.0.1`, or `[::1]`. This defeats
-  DNS-rebinding pages and other machines on the network.
+  DNS-rebinding pages.
 
-Because the proxy that serves the UI must connect from loopback, the shortcut is for the
-`pnpm dev` setup. When Facility runs in containers, use OIDC sign-in instead. Every API
-call still passes the normal role, project-scope, and organization checks.
+The UI proxy connects to the API from loopback, so the peer check only proves that the request came
+through it. What keeps other machines out is that `pnpm dev` and `pnpm --filter @facility/web start`
+bind the UI to `127.0.0.1`. Do not start the UI on another interface while `FACILITY_INSECURE_DEV=1`
+is set. The shortcut is for the `pnpm dev` setup. When Facility runs in containers, the proxy is not
+on loopback, so use OIDC sign-in instead. Every API call still passes the normal role,
+project-scope, and organization checks.
+
+The development PostgreSQL container from `docker-compose.dev.yml` publishes port 5461 on every
+interface with the password `facility`. On a shared network, change that mapping to
+`127.0.0.1:5461:5432`.
 
 Local mode is recorded on the organization (`orgs.access_mode = 'local'`). Members of a local-mode
 organization can sign in, authorize MCP clients, and use OAuth access tokens without a GitHub App
@@ -79,7 +86,8 @@ admits the owner by verified email, as described in [authentication](authenticat
 To run the Compose stack in local mode, mount each approved root at the same path in the `api` and
 `worker` services, list it in `FACILITY_LOCAL_REPOSITORY_ROOTS`, and set
 `FACILITY_LOCAL_REPOSITORY_OWNER_UIDS` to the user id that owns the repositories on the host. Use
-read-only mounts: Facility only reads source repositories.
+read-only mounts: Facility only reads source repositories. The `api` image includes the `git`
+client that both services use to read them.
 
 ```yaml
 services:

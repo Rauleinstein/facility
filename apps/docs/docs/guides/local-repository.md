@@ -94,18 +94,27 @@ it wakes a suspended workspace only for people who can run workspaces.
 
 ## 5. Export and import
 
-**Export approved commits** packages the approved commit range as a Git bundle and a patch. Download
-the bundle next to your repository and import it into a new branch:
+**Export approved commits** packages exactly the approved commit range as a Git bundle and a patch.
+Save the downloads outside your repository, so they never show up as untracked files, then import
+the bundle into a new branch from inside your repository:
 
 ```bash
-git fetch ./sexp_....bundle "refs/heads/facility/<story>:refs/heads/facility-review/<story>-<id>"
+git fetch /path/to/sexp_....bundle "refs/heads/facility/<story>:refs/heads/facility-review/<story>-<id>"
 git log --oneline main..facility-review/<story>-<id>
 git merge facility-review/<story>-<id>
 ```
 
 Each export imports to its own branch name, so repeating an export never overwrites an earlier
 import, and your working tree and default branch are untouched until you merge. Resolve any merge
-conflicts as usual. You can instead apply the patch with `git am`.
+conflicts as usual. To use the patch instead, apply it on a new branch from the story's base
+commit, so the branch you have checked out is not touched:
+
+```bash
+git switch -c facility-review/<story>-<id> <base commit>
+git am /path/to/sexp_....patch
+```
+
+The review panel shows these commands with the real names filled in.
 
 Facility records the review and the export, not a merge. The workspace stays available, so you
 can keep revising the story and export again.
@@ -114,13 +123,23 @@ can keep revising the story and export again.
 
 When your default branch moves on, choose **Refresh source from repository**. Facility imports the
 new commit as the workspace's source base and records the new revision. The story branch is not
-moved. The workspace's copy of the default branch only fast-forwards when it has not diverged, so
-an agent can rebase or merge deliberately.
+moved. The workspace's copy of the default branch only fast-forwards: if your repository's history
+was rewritten, Facility reports the divergence and leaves it alone. An agent can then rebase or
+merge deliberately.
+
+Until you refresh, the story keeps using the `.facility.yml` it imported. Setup, start, and check
+commands that you commit to your repository later apply to new stories, or to this one after a
+refresh.
 
 ## Limits of the first release
 
 - Facility never runs directly in your checkout and never merges into it.
 - Local repositories need the Docker workspace driver.
 - Submodules and Git LFS content are reported, not imported.
+- Facility identifies a repository by its Git directory. Another organization cannot register it,
+  through any path or worktree. A repository that borrows objects from another one
+  (`objects/info/alternates`) is refused until you run `git repack -a -d` and remove the file.
+- A local story has no pull request. It enters the review lane when it has commits past the
+  imported source, and needs attention when changes are requested or a check fails on its head.
 - Pull requests, issue synchronization, GitHub triggers, and CI mirroring do not apply to local
   projects. Manual, UI, MCP, and scheduled starts work.
