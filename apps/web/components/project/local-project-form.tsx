@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Eyebrow, Field, TextInput } from "@facility/ui";
+import { Button, Field, TextInput } from "@facility/ui";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -18,7 +18,7 @@ import { clientApi } from "@/lib/client-api";
  * committed history into its own workspaces, and starter configuration comes
  * back as a patch the user reviews and commits themselves.
  */
-export default function LocalProjectPage() {
+export function LocalProjectForm() {
   const router = useRouter();
   const [status, setStatus] = useState<LocalRepositoryStatus | null>(null);
   const [statusError, setStatusError] = useState("");
@@ -93,21 +93,12 @@ export default function LocalProjectPage() {
   }
 
   return (
-    <div className="flex max-w-4xl flex-col gap-8">
-      <div className="flex flex-col gap-2">
-        <Eyebrow>local repository</Eyebrow>
-        <h1 className="text-[clamp(22px,3vw,32px)] font-semibold tracking-tight">
-          Start a project from a repository on this machine
-        </h1>
-        <p className="text-[12.5px] text-(--mut)">
-          Agents work on Facility-managed copies in local Docker workspaces. You review, request
-          revisions, and import approved commits back into your repository. Model calls still go to
-          your configured AI provider.{" "}
-          <Link className="text-(--info) underline" href="/projects/new">
-            Use GitHub instead
-          </Link>
-        </p>
-      </div>
+    <div className="flex max-w-4xl flex-col gap-5">
+      <p className="text-[12.5px] leading-relaxed text-(--mut)">
+        Agents work on Facility-managed copies in local Docker workspaces. You review, request
+        revisions, and import approved commits back into your repository. No GitHub App or hosted
+        remote is needed; model calls still go to your configured AI provider.
+      </p>
 
       {statusError ? (
         <p className="text-sm text-(--bad)">
