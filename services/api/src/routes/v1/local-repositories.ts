@@ -4,18 +4,20 @@ import { type FacilityDb, projectRepositories, projects } from "@facility/db";
 import { and, eq, ne, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { AgentCatalogError } from "../../agents/catalog.js";
 import { ApiError, notFound } from "../../errors.js";
-import { LocalRepositoryError } from "../../repositories/local.js";
+import { COMMIT_SHA, isLocalAlias, LocalRepositoryError } from "../../repositories/local.js";
 import { localKickstart } from "../../repositories/local-kickstart.js";
 import { LocalReviewError } from "../../repositories/local-review.js";
-import { isLocalAlias, LOCAL_REPOSITORY_OWNER } from "../../repositories/sources.js";
+import { LOCAL_REPOSITORY_OWNER } from "../../repositories/sources.js";
+import { ProjectEnvironmentError } from "../../workspaces/project-environment.js";
 import { principal, type V1RouteContext } from "./shared.js";
 
 const ProjectParams = z.object({ projectId: z.string() });
 const RepositoryParams = z.object({ projectId: z.string(), repoId: z.string() });
 const StoryParams = z.object({ projectId: z.string(), storyId: z.string() });
 const ExportParams = StoryParams.extend({ exportId: z.string() });
-const Sha = z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/);
+const Sha = z.string().regex(COMMIT_SHA);
 
 const RegisterLocalRepositoryBody = z.object({
   /** Absolute path on the machine running Facility, under an approved root. */
@@ -93,17 +95,15 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
         await tx.execute(
           sql`select pg_advisory_xact_lock(hashtext(${`${actor.orgId}:${projectId}`}))`,
         );
-        // One organization owns a host path: another tenant can never register it.
-        await tx.execute(
-          sql`select pg_advisory_xact_lock(hashtext(${`facility:local-path:${inspection.path}`}))`,
-        );
+        // One organization owns a host repository, through any of its paths or
+        // worktrees. The database trigger enforces this; the check gives a clear error.
         const claimed = await tx
           .select({ id: projectRepositories.id })
           .from(projectRepositories)
           .where(
             and(
               eq(projectRepositories.source, "local"),
-              eq(projectRepositories.sourcePath, inspection.path),
+              eq(projectRepositories.sourceRepository, inspection.repositoryKey),
               ne(projectRepositories.orgId, actor.orgId),
             ),
           )
@@ -112,7 +112,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
           throw new ApiError(
             409,
             "local_repository_claimed",
-            "This repository path is registered by another organization",
+            "This repository is registered by another organization",
           );
         }
         const existing = await tx
@@ -120,7 +120,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
             role: projectRepositories.role,
             source: projectRepositories.source,
             name: projectRepositories.name,
-            sourcePath: projectRepositories.sourcePath,
+            sourceRepository: projectRepositories.sourceRepository,
           })
           .from(projectRepositories)
           .where(
@@ -139,7 +139,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
         if (
           existing.some(
             (repository) =>
-              repository.sourcePath === inspection.path ||
+              repository.sourceRepository === inspection.repositoryKey ||
               repository.name.toLowerCase() === alias.toLowerCase(),
           )
         ) {
@@ -165,6 +165,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
                 : "primary",
               source: "local",
               sourcePath: inspection.path,
+              sourceRepository: inspection.repositoryKey,
             })
             .returning()
         )[0];
@@ -387,15 +388,11 @@ async function translate<T>(operation: () => Promise<T>): Promise<T> {
     if (error instanceof LocalRepositoryError || error instanceof LocalReviewError) {
       throw new ApiError(error.statusCode, error.code, error.message, undefined, true);
     }
-    const value = error as { code?: unknown; message?: unknown; statusCode?: unknown };
-    if (typeof value.code === "string" && error instanceof Error && error.name.endsWith("Error")) {
-      if (["ProjectEnvironmentError", "AgentCatalogError"].includes(error.name)) {
-        throw new ApiError(
-          typeof value.statusCode === "number" ? value.statusCode : 409,
-          value.code,
-          typeof value.message === "string" ? value.message : value.code,
-        );
-      }
+    if (error instanceof AgentCatalogError) {
+      throw new ApiError(error.statusCode, error.code, error.message);
+    }
+    if (error instanceof ProjectEnvironmentError) {
+      throw new ApiError(409, error.code, error.message);
     }
     throw error;
   }

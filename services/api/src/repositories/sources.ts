@@ -37,10 +37,6 @@ export interface RepositoryAccess {
   issue(orgId: string, projectId: string): Promise<GithubWorkspaceCredentials>;
 }
 
-export function isLocalAlias(value: string) {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value) && !/\.git$/i.test(value);
-}
-
 export async function projectRepositoryRows(db: FacilityDb, orgId: string, projectId: string) {
   return db
     .select()
@@ -144,15 +140,15 @@ export class LocalRepositorySnapshots implements LocalSnapshotProvider {
 
   async resolve(orgId: string, projectId: string, repositoryId?: string) {
     const row = await this.repository(orgId, projectId, repositoryId);
-    return { row, commit: await this.host.resolve(row.sourcePath, row.defaultBranch) };
+    return { row, commit: await this.host.resolve(row, row.defaultBranch) };
   }
 
   async snapshot(orgId: string, projectId: string, repositoryId: string, commit?: string) {
     const row = await this.repository(orgId, projectId, repositoryId);
-    const revision = commit ?? (await this.host.resolve(row.sourcePath, row.defaultBranch));
+    const revision = commit ?? (await this.host.resolve(row, row.defaultBranch));
     const [bundle, warnings] = await Promise.all([
-      this.host.snapshot(row.sourcePath, revision),
-      this.host.warnings(row.sourcePath, revision),
+      this.host.snapshot(row, revision),
+      this.host.warnings(row, revision),
     ]);
     return { commit: revision, branch: row.defaultBranch, bundle, warnings };
   }
@@ -164,7 +160,7 @@ export class LocalProjectManifestSource implements ProjectManifestSource {
 
   async load(orgId: string, projectId: string): Promise<ProjectManifest> {
     const { row, commit } = await this.snapshots.resolve(orgId, projectId);
-    const source = await this.snapshots.host.readFile(row.sourcePath, commit, ".facility.yml");
+    const source = await this.snapshots.host.readFile(row, commit, ".facility.yml");
     if (source === undefined) {
       throw new ProjectEnvironmentError(
         "project_manifest_not_found",
@@ -186,7 +182,7 @@ export class LocalAgentCatalogSource implements AgentCatalogSource {
     try {
       const { row, commit } = await this.snapshots.resolve(orgId, projectId);
       const files = await this.snapshots.host.files(
-        row.sourcePath,
+        row,
         commit,
         [".agents", ".claude/skills"],
         (path) => isAgentManifestPath(path) || isProjectSkillPath(path),

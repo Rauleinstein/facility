@@ -1,6 +1,16 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -46,16 +56,17 @@ describe("local repository host", () => {
 
   it("registers a repository root with its current branch, commit, and no side effects", async () => {
     const repository = await createRepository(join(root, "app"));
-    const before = await git(repository, ["status", "--porcelain", "--untracked-files=all"]);
+    const before = await gitDirState(repository);
     const inspection = await host.inspect(repository);
     expect(inspection).toMatchObject({
       path: repository,
       defaultBranch: "main",
-      bare: false,
+      repositoryKey: join(repository, ".git"),
       warnings: [],
     });
     expect(inspection.headSha).toBe((await git(repository, ["rev-parse", "HEAD"])).trim());
-    expect(await git(repository, ["status", "--porcelain", "--untracked-files=all"])).toBe(before);
+    // Compared without running git, which would itself refresh the index.
+    expect(await gitDirState(repository)).toEqual(before);
   });
 
   it("rejects malformed, traversing, and out-of-root paths", async () => {
@@ -69,6 +80,13 @@ describe("local repository host", () => {
     );
     await expectCode(host.inspect(join(outside, "secret")), "local_repository_outside_roots", 403);
     await expectCode(host.inspect(join(root, "missing")), "local_repository_not_found", 404);
+    // Outside the roots, an existing and a missing path are indistinguishable.
+    await expectCode(host.inspect(join(outside, "missing")), "local_repository_outside_roots", 403);
+    await expectCode(
+      host.inspect(join(outside, "secret", "README.md")),
+      "local_repository_outside_roots",
+      403,
+    );
     // A sibling whose name only shares the root's prefix is outside the root.
     await createRepository(`${root}-evil`);
     await expectCode(host.inspect(`${root}-evil`), "local_repository_outside_roots", 403);
@@ -85,6 +103,43 @@ describe("local repository host", () => {
     const main = await createRepository(join(outside, "main-repo"));
     await git(main, ["worktree", "add", "-q", join(root, "worktree"), "-b", "feature"]);
     await expectCode(host.inspect(join(root, "worktree")), "local_repository_outside_roots", 403);
+  });
+
+  it("identifies a repository by its Git directory, whichever worktree registers it", async () => {
+    const main = await createRepository(join(root, "keyed"));
+    await git(main, ["worktree", "add", "-q", join(root, "keyed-worktree"), "-b", "feature"]);
+    const fromMain = await host.inspect(main);
+    const fromWorktree = await host.inspect(join(root, "keyed-worktree"));
+    expect(fromWorktree.path).toBe(join(root, "keyed-worktree"));
+    expect(fromWorktree.repositoryKey).toBe(fromMain.repositoryKey);
+    await expectCode(
+      host.verify(main, join(root, "another", ".git")),
+      "local_repository_path_changed",
+      409,
+    );
+    expect(await host.verify(main, fromMain.repositoryKey)).toBe(main);
+  });
+
+  it("registers a bare repository only at its own Git directory", async () => {
+    const source = await createRepository(join(root, "bare-source"));
+    const bare = join(root, "bare.git");
+    await git(root, ["clone", "-q", "--bare", source, bare]);
+    expect((await host.inspect(bare)).repositoryKey).toBe(bare);
+    for (const inner of ["refs", "objects", join("refs", "heads")]) {
+      await expectCode(host.inspect(join(bare, inner)), "local_repository_not_root", 400);
+    }
+  });
+
+  it("refuses object stores reachable outside an approved root", async () => {
+    const external = await createRepository(join(outside, "objects-source"));
+    const shared = join(root, "shared-clone");
+    await git(root, ["clone", "-q", "--shared", external, shared]);
+    await expectCode(host.inspect(shared), "local_repository_alternates_unsupported", 400);
+
+    const linked = await createRepository(join(root, "linked-objects"));
+    await rm(join(linked, ".git", "objects"), { recursive: true, force: true });
+    await symlink(join(external, ".git", "objects"), join(linked, ".git", "objects"));
+    await expectCode(host.inspect(linked), "local_repository_outside_roots", 403);
   });
 
   it("requires a Git repository root with at least one commit", async () => {
@@ -175,7 +230,7 @@ describe("local repository host", () => {
     await commitAll(repository, "later");
     await writeFile(join(repository, "dirty.txt"), "uncommitted\n");
     const refsBefore = await git(repository, ["for-each-ref"]);
-    const statusBefore = await git(repository, ["status", "--porcelain", "--untracked-files=all"]);
+    const stateBefore = await gitDirState(repository);
 
     const bundle = await host.snapshot(repository, pinned);
     const file = join(base, "snapshot.bundle");
@@ -187,10 +242,8 @@ describe("local repository host", () => {
     expect(await git(clone, ["ls-tree", "-r", "--name-only", "imported"])).not.toMatch(
       /later|dirty/,
     );
+    expect(await gitDirState(repository)).toEqual(stateBefore);
     expect(await git(repository, ["for-each-ref"])).toBe(refsBefore);
-    expect(await git(repository, ["status", "--porcelain", "--untracked-files=all"])).toBe(
-      statusBefore,
-    );
     const limited = new LocalRepositoryHost({ roots: [root], maxSnapshotBytes: 16 });
     await expectCode(
       limited.snapshot(repository, pinned),
@@ -250,6 +303,16 @@ describe("local repository host", () => {
     expect(await readFile(join(repository, "README.md"), "utf8")).toBe("# app\n");
   });
 });
+
+/** Index and refs as files on disk: a read-only operation leaves both untouched. */
+async function gitDirState(repository: string) {
+  const index = join(repository, ".git", "index");
+  return {
+    index: (await readFile(index)).toString("base64"),
+    indexModified: (await stat(index)).mtimeMs,
+    head: await readFile(join(repository, ".git", "HEAD"), "utf8"),
+  };
+}
 
 async function expectCode(promise: Promise<unknown>, code: string, status: number) {
   const error = await promise.then(

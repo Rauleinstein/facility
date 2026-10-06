@@ -160,11 +160,37 @@ describe("Facility 0.12 database", () => {
 
     for (const values of [
       // A local row must use the sentinel owner, a canonical path, and no installation.
-      { source: "local" as const, owner: "acme", name: "a1", sourcePath: "/srv/a1" },
-      { source: "local" as const, owner: "_local", name: "a2", sourcePath: null },
-      { source: "local" as const, owner: "_local", name: "a3", sourcePath: "relative/a3" },
+      {
+        source: "local" as const,
+        owner: "acme",
+        name: "a1",
+        sourcePath: "/srv/a1",
+        sourceRepository: "/srv/a1/.git",
+      },
+      {
+        source: "local" as const,
+        owner: "_local",
+        name: "a2",
+        sourcePath: null,
+        sourceRepository: "/srv/a2/.git",
+      },
+      {
+        source: "local" as const,
+        owner: "_local",
+        name: "a3",
+        sourcePath: "relative/a3",
+        sourceRepository: "/srv/a3/.git",
+      },
+      {
+        source: "local" as const,
+        owner: "_local",
+        name: "a7",
+        sourcePath: "/srv/a7",
+        sourceRepository: null,
+      },
       // A GitHub row can neither carry a host path nor claim the local owner sentinel.
       { source: "github" as const, owner: "acme", name: "a4", sourcePath: "/srv/a4" },
+      { source: "github" as const, owner: "acme", name: "a8", sourceRepository: "/srv/a8/.git" },
       { source: "github" as const, owner: "_local", name: "a5", sourcePath: null },
       { source: "svn" as never, owner: "acme", name: "a6", sourcePath: null },
     ]) {
@@ -181,11 +207,12 @@ describe("Facility 0.12 database", () => {
       owner: "_local",
       name: "app",
       sourcePath: "/srv/app",
+      sourceRepository: `/srv/${suffix}/app/.git`,
     };
     await db.insert(schema.projectRepositories).values({ ...local, id: `repo_l1_${suffix}` });
     for (const duplicate of [
       { name: "APP", sourcePath: "/srv/other" },
-      { name: "other", sourcePath: "/srv/app" },
+      { name: "other", sourcePath: "/srv/app", sourceRepository: `/srv/${suffix}/other/.git` },
     ]) {
       await expect(
         db
@@ -193,6 +220,38 @@ describe("Facility 0.12 database", () => {
           .values({ ...local, ...duplicate, id: `repo_dup_${duplicate.name}_${suffix}` }),
       ).rejects.toMatchObject({ cause: { code: "23505" } });
     }
+    // Another project of the same organization may register the same repository.
+    const sibling = `proj_src2_${suffix}`;
+    await db
+      .insert(schema.projects)
+      .values({ id: sibling, orgId, name: "S2", slug: "project-2", settings: {} });
+    await db.insert(schema.projectRepositories).values({
+      ...local,
+      projectId: sibling,
+      sourcePath: "/srv/app-worktree",
+      id: `repo_l2_${suffix}`,
+    });
+    // Another organization cannot, through any path of that repository.
+    const otherOrg = `org_src_other_${suffix}`;
+    await db
+      .insert(schema.orgs)
+      .values({ id: otherOrg, name: "O", slug: `o-${suffix}`, settings: {} });
+    await db.insert(schema.projects).values({
+      id: `proj_other_${suffix}`,
+      orgId: otherOrg,
+      name: "O",
+      slug: "project",
+      settings: {},
+    });
+    await expect(
+      db.insert(schema.projectRepositories).values({
+        ...local,
+        orgId: otherOrg,
+        projectId: `proj_other_${suffix}`,
+        sourcePath: "/srv/elsewhere",
+        id: `repo_cross_${suffix}`,
+      }),
+    ).rejects.toMatchObject({ cause: { code: "23505" } });
     // A local alias equal to a GitHub repository name is not a GitHub identity.
     await expect(
       db
