@@ -114,11 +114,13 @@ describe("local repository host", () => {
     expect(fromWorktree.path).toBe(join(root, "keyed-worktree"));
     expect(fromWorktree.repositoryKey).toBe(fromMain.repositoryKey);
     await expectCode(
-      host.verify(main, join(root, "another", ".git")),
+      host.verify({ sourcePath: main, sourceRepository: join(root, "another", ".git") }),
       "local_repository_path_changed",
       409,
     );
-    expect(await host.verify(main, fromMain.repositoryKey)).toBe(main);
+    expect(await host.verify({ sourcePath: main, sourceRepository: fromMain.repositoryKey })).toBe(
+      main,
+    );
   });
 
   it("registers a bare repository only at its own Git directory", async () => {
@@ -181,8 +183,8 @@ describe("local repository host", () => {
       await chmod(join(repository, ".git", "hooks", hook), 0o755);
     }
     const inspection = await host.inspect(repository);
-    await host.readFile(repository, inspection.headSha, ".facility.yml");
-    await host.snapshot(repository, inspection.headSha);
+    await host.readFile(registered(repository), inspection.headSha, ".facility.yml");
+    await host.snapshot(registered(repository), inspection.headSha);
     expect(existsSync(marker)).toBe(false);
   });
 
@@ -193,10 +195,12 @@ describe("local repository host", () => {
     await commitAll(repository, "later");
     await writeFile(join(repository, ".facility.yml"), "uncommitted: true\n");
     await writeFile(join(repository, "untracked.txt"), "local only\n");
-    expect(await host.readFile(repository, pinned, ".facility.yml")).toBe("version: 1\n");
-    expect(await host.readFile(repository, pinned, "missing.yml")).toBeUndefined();
+    expect(await host.readFile(registered(repository), pinned, ".facility.yml")).toBe(
+      "version: 1\n",
+    );
+    expect(await host.readFile(registered(repository), pinned, "missing.yml")).toBeUndefined();
     await expectCode(
-      host.readFile(repository, "not-a-sha", ".facility.yml"),
+      host.readFile(registered(repository), "not-a-sha", ".facility.yml"),
       "local_repository_revision_invalid",
       400,
     );
@@ -208,9 +212,9 @@ describe("local repository host", () => {
     await symlink("/etc/passwd", join(repository, ".agents", "builder.md"));
     await symlink("/etc/passwd", join(repository, "linked.yml"));
     const head = await commitAll(repository, "links");
-    const files = await host.files(repository, head, [".agents"]);
+    const files = await host.files(registered(repository), head, [".agents"]);
     expect(files.get(".agents/builder.md")).toBe("/etc/passwd");
-    expect(await host.readFile(repository, head, "linked.yml")).toBeUndefined();
+    expect(await host.readFile(registered(repository), head, "linked.yml")).toBeUndefined();
   });
 
   it("bounds configuration reads", async () => {
@@ -218,7 +222,7 @@ describe("local repository host", () => {
     await writeFile(join(repository, "big.yml"), "x".repeat(10_000));
     const head = await commitAll(repository, "big");
     await expectCode(
-      host.readFile(repository, head, "big.yml"),
+      host.readFile(registered(repository), head, "big.yml"),
       "local_repository_file_too_large",
       413,
     );
@@ -233,7 +237,7 @@ describe("local repository host", () => {
     const refsBefore = await git(repository, ["for-each-ref"]);
     const stateBefore = await gitDirState(repository);
 
-    const bundle = await host.snapshot(repository, pinned);
+    const bundle = await host.snapshot(registered(repository), pinned);
     const file = join(base, "snapshot.bundle");
     await writeFile(file, bundle);
     const clone = join(base, "snapshot-clone");
@@ -247,7 +251,7 @@ describe("local repository host", () => {
     expect(await git(repository, ["for-each-ref"])).toBe(refsBefore);
     const limited = new LocalRepositoryHost({ roots: [root], maxSnapshotBytes: 16 });
     await expectCode(
-      limited.snapshot(repository, pinned),
+      limited.snapshot(registered(repository), pinned),
       "local_repository_snapshot_too_large",
       413,
     );
@@ -275,7 +279,7 @@ describe("local repository host", () => {
       const statusBefore = await git(repository, ["status", "--porcelain"]);
       const stateBefore = await gitDirState(repository);
 
-      const { commitSha } = await host.createBranch(repository, head, proposal());
+      const { commitSha } = await host.createBranch(registered(repository), head, proposal());
 
       expect((await git(repository, ["rev-parse", "facility/kickstart"])).trim()).toBe(commitSha);
       expect((await git(repository, ["rev-parse", `${commitSha}^`])).trim()).toBe(head);
@@ -304,13 +308,13 @@ describe("local repository host", () => {
       const head = (await git(repository, ["rev-parse", "main"])).trim();
       const tip = (await git(repository, ["rev-parse", "facility/kickstart"])).trim();
       await expectCode(
-        host.createBranch(repository, head, proposal()),
+        host.createBranch(registered(repository), head, proposal()),
         "local_repository_branch_exists",
         409,
       );
       await git(repository, ["branch", "facility/mine", head]);
       await expectCode(
-        host.createBranch(repository, head, proposal("facility/mine")),
+        host.createBranch(registered(repository), head, proposal("facility/mine")),
         "local_repository_branch_exists",
         409,
       );
@@ -324,23 +328,23 @@ describe("local repository host", () => {
       const refsBefore = await git(repository, ["for-each-ref"]);
       for (const branch of ["main", "feature/x", "facility/../main", "facility/a..b"]) {
         await expectCode(
-          host.createBranch(repository, head, proposal(branch)),
+          host.createBranch(registered(repository), head, proposal(branch)),
           "local_repository_branch_invalid",
           400,
         );
       }
       await expectCode(
-        host.createBranch(repository, "not-a-sha", proposal()),
+        host.createBranch(registered(repository), "not-a-sha", proposal()),
         "local_repository_revision_invalid",
         400,
       );
       await expectCode(
-        host.createBranch(repository, head, { ...proposal(), files: [] }),
+        host.createBranch(registered(repository), head, { ...proposal(), files: [] }),
         "local_repository_commit_empty",
         400,
       );
       await expectCode(
-        host.createBranch(join(outside, "secret"), head, proposal()),
+        host.createBranch(registered(join(outside, "secret")), head, proposal()),
         "local_repository_outside_roots",
         403,
       );
@@ -364,7 +368,7 @@ describe("local repository host", () => {
         await writeFile(join(repository, ".git", "hooks", hook), `#!/bin/sh\ntouch ${marker}\n`);
         await chmod(join(repository, ".git", "hooks", hook), 0o755);
       }
-      const { commitSha } = await host.createBranch(repository, head, proposal());
+      const { commitSha } = await host.createBranch(registered(repository), head, proposal());
       expect(await git(repository, ["show", `${commitSha}:nested/dir/new.txt`])).toBe("new\n");
       expect(existsSync(marker)).toBe(false);
     });
@@ -379,7 +383,7 @@ describe("local repository host", () => {
         await chmodTree(objects, 0o555);
         try {
           await expectCode(
-            host.createBranch(repository, head, proposal()),
+            host.createBranch(registered(repository), head, proposal()),
             "local_repository_git_failed",
             409,
           );
@@ -396,11 +400,23 @@ describe("local repository host", () => {
     const inspection = await host.inspect(repository);
     await rename(repository, join(root, "replaced-original"));
     await symlink(join(outside, "secret"), repository);
-    await expectCode(host.verify(inspection.path), "local_repository_outside_roots", 403);
+    await expectCode(
+      host.verify(registered(inspection.path)),
+      "local_repository_outside_roots",
+      403,
+    );
     await rm(repository);
     await symlink(join(root, "replaced-original"), repository);
-    await expectCode(host.verify(inspection.path), "local_repository_path_changed", 409);
-    await expectCode(host.resolve(inspection.path, "main"), "local_repository_path_changed", 409);
+    await expectCode(
+      host.verify(registered(inspection.path)),
+      "local_repository_path_changed",
+      409,
+    );
+    await expectCode(
+      host.resolve(registered(inspection.path), "main"),
+      "local_repository_path_changed",
+      409,
+    );
   });
 
   it("warns about submodules and Git LFS content it cannot import", async () => {
@@ -438,7 +454,7 @@ describe("local repository host", () => {
   it("lists paths without reading file content", async () => {
     const repository = join(root, "app");
     const head = (await git(repository, ["rev-parse", "HEAD"])).trim();
-    expect(await host.paths(repository, head)).toEqual([".facility.yml", "README.md"]);
+    expect(await host.paths(registered(repository), head)).toEqual([".facility.yml", "README.md"]);
     expect(await readFile(join(repository, "README.md"), "utf8")).toBe("# app\n");
   });
 });
@@ -501,4 +517,9 @@ function git(cwd: string, args: string[]) {
       else resolve(stdout);
     });
   });
+}
+
+/** A repository as registration records it: an ordinary checkout keyed by its .git directory. */
+function registered(path: string) {
+  return { sourcePath: path, sourceRepository: join(path, ".git") };
 }

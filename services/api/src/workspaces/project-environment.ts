@@ -863,7 +863,7 @@ export class ProjectEnvironmentService {
     repository: WorkspaceRepository,
     revision?: string,
   ) {
-    if (!this.localSnapshots || !repository.id) {
+    if (!this.localSnapshots) {
       throw new ProjectEnvironmentError(
         "local_repositories_disabled",
         "Local repositories are not enabled on this Facility instance",
@@ -941,7 +941,6 @@ export class ProjectEnvironmentService {
     revision: string,
     initialRevision = revision,
   ) {
-    if (!repository.id) return;
     const entry = {
       [repository.id]: {
         revision,

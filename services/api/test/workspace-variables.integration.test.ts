@@ -284,7 +284,14 @@ describe("workspace variables: authenticated API, encryption, and process delive
       credentials: {
         gitIdentity: { name: "bot", email: "bot@example.com" },
         repositories: [
-          { owner: "acme", name: "app", defaultBranch: "main", role: "primary" as const },
+          {
+            id: "repo_app",
+            source: "github" as const,
+            owner: "acme",
+            name: "app",
+            defaultBranch: "main",
+            role: "primary" as const,
+          },
         ],
         environment: {},
         expiresAt: new Date(Date.now() + 3600000),

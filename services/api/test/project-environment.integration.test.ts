@@ -92,8 +92,22 @@ environment:
   const credentials: GithubWorkspaceCredentials = {
     gitIdentity: { name: "my-app[bot]", email: "12345+my-app[bot]@users.noreply.github.com" },
     repositories: [
-      { owner: "acme", name: "app", defaultBranch: "main", role: "primary" },
-      { owner: "acme", name: "shared", defaultBranch: "main", role: "related" },
+      {
+        id: "repo_app",
+        source: "github",
+        owner: "acme",
+        name: "app",
+        defaultBranch: "main",
+        role: "primary",
+      },
+      {
+        id: "repo_shared",
+        source: "github",
+        owner: "acme",
+        name: "shared",
+        defaultBranch: "main",
+        role: "related",
+      },
     ],
     environment: {},
     expiresAt: new Date(Date.now() + 3_600_000),

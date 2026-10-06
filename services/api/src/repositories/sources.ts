@@ -130,14 +130,14 @@ export class LocalRepositorySnapshots implements LocalSnapshotProvider {
         )
         .limit(1)
     )[0];
-    if (row?.source !== "local" || !row.sourcePath) {
+    if (row?.source !== "local" || !row.sourcePath || !row.sourceRepository) {
       throw new LocalRepositoryError(
         "local_repository_not_found",
         "Local repository not found in this project",
         404,
       );
     }
-    return row as ProjectRepositoryRow & { sourcePath: string };
+    return { ...row, sourcePath: row.sourcePath, sourceRepository: row.sourceRepository };
   }
 
   async resolve(orgId: string, projectId: string, repositoryId?: string) {

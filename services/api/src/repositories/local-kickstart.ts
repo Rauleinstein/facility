@@ -4,7 +4,7 @@ import {
   DEFAULT_LOCAL_GIT_IDENTITY,
   LocalRepositoryError,
   type LocalRepositoryHost,
-  type LocalSourceRefObject,
+  type LocalSource,
 } from "./local.js";
 
 /** The branch kickstart creates, mirroring the GitHub kickstart PR branch. */
@@ -31,7 +31,7 @@ const DETECTION_FILES = [
  */
 export async function localKickstart(
   host: LocalRepositoryHost,
-  repository: { name: string; defaultBranch: string } & LocalSourceRefObject,
+  repository: { name: string; defaultBranch: string } & LocalSource,
   answers: KickstartAnswers,
 ) {
   const baseSha = await host.resolve(repository, repository.defaultBranch);
@@ -81,7 +81,7 @@ export async function localKickstart(
  */
 export async function createLocalKickstartBranch(
   host: LocalRepositoryHost,
-  repository: { name: string; defaultBranch: string } & LocalSourceRefObject,
+  repository: { name: string; defaultBranch: string } & LocalSource,
   answers: KickstartAnswers,
   author: { name: string; email: string } = DEFAULT_LOCAL_GIT_IDENTITY,
 ) {

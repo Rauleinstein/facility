@@ -4,10 +4,9 @@ import type { GithubMaintainerTokenFactory } from "./client.js";
 import type { GithubGitIdentity } from "./git-identity.js";
 
 export type WorkspaceRepository = {
-  /** Project repository id; required for local sources, which are imported by id. */
-  id?: string;
-  /** Omitted for GitHub repositories. */
-  source?: "github" | "local";
+  /** Project repository id. */
+  id: string;
+  source: "github" | "local";
   owner: string;
   name: string;
   defaultBranch: string;

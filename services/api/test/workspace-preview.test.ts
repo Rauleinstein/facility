@@ -22,7 +22,16 @@ environment:
 `);
 const credentials = {
   gitIdentity: { name: "my-app[bot]", email: "12345+my-app[bot]@users.noreply.github.com" },
-  repositories: [{ owner: "acme", name: "app", defaultBranch: "main", role: "primary" as const }],
+  repositories: [
+    {
+      id: "repo_app",
+      source: "github" as const,
+      owner: "acme",
+      name: "app",
+      defaultBranch: "main",
+      role: "primary" as const,
+    },
+  ],
   environment: {},
   expiresAt: new Date(Date.now() + 60_000),
 };
