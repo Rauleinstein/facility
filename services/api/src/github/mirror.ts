@@ -77,7 +77,11 @@ export class GithubMirrorService {
       .select()
       .from(projectRepositories)
       .where(
-        and(eq(projectRepositories.orgId, orgId), eq(projectRepositories.projectId, projectId)),
+        and(
+          eq(projectRepositories.orgId, orgId),
+          eq(projectRepositories.projectId, projectId),
+          eq(projectRepositories.source, "github"),
+        ),
       )
       .orderBy(asc(projectRepositories.owner), asc(projectRepositories.name));
     let issues = 0;
@@ -215,6 +219,7 @@ export class GithubMirrorService {
               eq(projectRepositories.orgId, orgId),
               binding.projectId ? eq(projectRepositories.projectId, binding.projectId) : undefined,
               binding.repositoryId ? eq(projectRepositories.id, binding.repositoryId) : undefined,
+              eq(projectRepositories.source, "github"),
               eq(projectRepositories.owner, owner),
               eq(projectRepositories.name, name),
             ),
