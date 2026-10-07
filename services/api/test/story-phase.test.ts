@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
+import {
+  latestReview,
+  localReviewSummary,
+  reviewStatus,
+} from "../src/repositories/local-review-rules.js";
 import { mergePersons, searchMatches } from "../src/stories/backlog.js";
 import {
   derivePhase,
-  localReviewSummary,
   pickPullRequest,
   provisionalTitle,
   resolveDefaultAgent,
@@ -287,6 +291,26 @@ describe("local review phase", () => {
       events: [{ type: "local_review.approved", data: { commitSha: "c".repeat(40) } }],
     });
     expect(phase(stale)).toEqual({ phase: "review", reason: "awaiting_review" });
+  });
+
+  it("gives the review panel and the backlog one status for the same evidence", () => {
+    const earlier = "c".repeat(40);
+    const status = (type: string, commitSha: string, clean = true) =>
+      reviewStatus(latestReview([{ type, data: { commitSha } }]), { sha: head.sha, clean });
+    expect(reviewStatus(undefined, { sha: head.sha, clean: true })).toBe("none");
+    expect(status("local_review.approved", head.sha)).toBe("approved");
+    expect(status("local_review.approved", head.sha, false)).toBe("stale");
+    expect(status("local_review.approved", earlier)).toBe("stale");
+    expect(status("local_review.changes_requested", head.sha)).toBe("changes_requested");
+    // Regression: the panel kept "changes requested" after new commits while the backlog
+    // showed the new head awaiting review. Both now wait for review of the new head.
+    expect(status("local_review.changes_requested", earlier)).toBe("none");
+    const summary = localReviewSummary({
+      head,
+      imported,
+      events: [{ type: "local_review.changes_requested", data: { commitSha: earlier } }],
+    });
+    expect(phase(summary)).toEqual({ phase: "review", reason: "awaiting_review" });
   });
 
   it("needs attention for requested changes and failing checks on the current head", () => {

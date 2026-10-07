@@ -45,8 +45,9 @@ export function NewStory({
   const [agent, setAgent] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  // One key per request attempt: retrying after a failure reuses it, so the
-  // server sees one story even if the button is pressed twice.
+  // One key per request attempt: retrying after an unknown outcome reuses it,
+  // so the server sees one story even if the button is pressed twice. A
+  // definite rejection is replayed for its key, so the next attempt needs a new one.
   const attemptKey = useRef<string | null>(null);
   const defaultChoice = agents.find((choice) => choice.isDefault) ?? null;
   const canSubmit = message.trim().length > 0 && !pending && (defaultChoice || agent);
@@ -83,6 +84,11 @@ export function NewStory({
       },
     );
     if (!result.ok) {
+      const outcomeUnknown =
+        result.status === undefined ||
+        result.status >= 500 ||
+        result.code === "idempotency_in_progress";
+      if (!outcomeUnknown) attemptKey.current = null;
       setPending(false);
       setError(result.message);
       return;

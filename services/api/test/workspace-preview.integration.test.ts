@@ -142,7 +142,16 @@ describe("workspace preview session security", async () => {
     } as unknown as WorkspaceRuntime;
     const credentials = {
       issue: async () => ({
-        repositories: [{ owner: "theam", name: "example", defaultBranch: "main", role: "primary" }],
+        repositories: [
+          {
+            id: "repo_example",
+            source: "github",
+            owner: "theam",
+            name: "example",
+            defaultBranch: "main",
+            role: "primary",
+          },
+        ],
         environment: {},
         expiresAt: new Date(Date.now() + 60_000),
       }),

@@ -16,6 +16,8 @@ import { githubRateLimitRetryAt } from "../github/rate-limit.js";
 import { CostBudgetService } from "../insights/costs.js";
 import type { RepositoryAccess } from "../repositories/sources.js";
 import type { StoryWorkspaceService } from "../stories/service.js";
+import type { RepositorySource } from "../workspaces/credentials.js";
+import { readWorkspaceLocator } from "../workspaces/locator.js";
 import type {
   ProjectEnvironmentService,
   ProjectManifestSource,
@@ -217,23 +219,11 @@ export class TurnDispatcher {
         previousSetupChecksum: workspace.setupChecksum,
       });
       secrets = credentialSecrets(prepared.processEnvironment, prepared.secretNames);
-      const localSource = credential.repositories.some(
-        (repository) => repository.source === "local",
-      );
-      if (localSource) {
-        // Evidence of exactly which host commit and configuration this turn ran against.
+      if (prepared.sourceEvidence) {
         await appendTurnEvent(this.db, {
           ...eventBase,
           type: "turn.source",
-          data: {
-            source: "local",
-            projectManifestHash: projectManifest.hash,
-            configurationRevision: projectManifest.sourceRevision ?? null,
-            sourceRevisions: await this.environment.sourceRevisions({
-              orgId: input.orgId,
-              workspace: workspaceLocator(workspace),
-            }),
-          },
+          data: prepared.sourceEvidence,
         });
       }
       const session = (
@@ -322,7 +312,14 @@ export class TurnDispatcher {
         turnId: turn.id,
         manifest,
         workspace: workspaceLocator(workspace),
-        prompt: buildPrompt(manifest, story, conversation.summary, messages, turn.id, localSource),
+        prompt: buildPrompt(
+          manifest,
+          story,
+          conversation.summary,
+          messages,
+          turn.id,
+          credential.source,
+        ),
         cwd: prepared.primaryCwd,
         nativeSessionId: session?.nativeSessionId,
         environment: prepared.processEnvironment,
@@ -770,28 +767,18 @@ function numberValue(value: unknown) {
 }
 
 function workspaceLocator(row: typeof workspaces.$inferSelect): WorkspaceLocator {
-  const environment = row.environment as {
-    image?: unknown;
-    variables?: unknown;
-    ports?: WorkspaceLocator["ports"];
-    resources?: WorkspaceLocator["resources"];
-  };
-  if (!row.externalRef || typeof environment.image !== "string") {
-    throw new Error("workspace provider reference or image is missing");
-  }
-  return {
-    id: row.id,
-    image: environment.image,
-    environment:
-      environment.variables && typeof environment.variables === "object"
-        ? (environment.variables as Record<string, string>)
-        : {},
-    ports: Array.isArray(environment.ports) ? environment.ports : [],
-    resources: environment.resources,
-    externalRef: row.externalRef,
-    volumeRef: row.volumeRef,
-  };
+  const locator = readWorkspaceLocator(row);
+  if (!locator) throw new Error("workspace provider reference or image is missing");
+  return locator;
 }
+
+/** What the agent may do with the repository, by where the repository comes from. */
+const SOURCE_INSTRUCTIONS: Record<RepositorySource, string> = {
+  github:
+    "Continue in the existing worktree. You have full workspace, network, Docker, browser, git, and GitHub maintainer access. Preserve useful uncommitted work. Commit and push coherent changes when the task calls for it. Never merge the pull request or publish packages.",
+  local:
+    "Continue in the existing worktree. You have full workspace, network, Docker, browser, and git access. This is a local repository copy with no remote and no GitHub access: do not push, open pull requests, or run gh. Preserve useful uncommitted work. Commit coherent changes to the current story branch when the task calls for it; a person reviews and exports the commits. Never publish packages.",
+};
 
 function buildPrompt(
   manifest: AgentManifest,
@@ -799,7 +786,7 @@ function buildPrompt(
   summary: string | null,
   messages: Array<typeof storyMessages.$inferSelect>,
   turnId: string,
-  localSource = false,
+  source: RepositorySource,
 ) {
   const currentSequence = messages.find(
     (message) => message.turnId === turnId && message.role === "user",
@@ -817,9 +804,7 @@ function buildPrompt(
     `# Story\n${story.title}\nExternal identity: ${story.provider}:${story.externalId}`,
     summary ? `# Conversation summary\n${summary}` : "",
     `# Shared conversation\n${truncateStart(transcript, 120_000)}`,
-    localSource
-      ? "Continue in the existing worktree. You have full workspace, network, Docker, browser, and git access. This is a local repository copy with no remote and no GitHub access: do not push, open pull requests, or run gh. Preserve useful uncommitted work. Commit coherent changes to the current story branch when the task calls for it; a person reviews and exports the commits. Never publish packages."
-      : "Continue in the existing worktree. You have full workspace, network, Docker, browser, git, and GitHub maintainer access. Preserve useful uncommitted work. Commit and push coherent changes when the task calls for it. Never merge the pull request or publish packages.",
+    SOURCE_INSTRUCTIONS[source],
     "If you cannot continue without a human answer, end with exactly <facility-needs-attention>your concise question</facility-needs-attention>. Do not use that marker for a recoverable command or environment failure.",
   ]
     .filter(Boolean)

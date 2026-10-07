@@ -9,31 +9,39 @@ import {
   workspaces,
 } from "@facility/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { ApiError } from "../errors.js";
 import { appendStoryEvidence } from "../stories/evidence.js";
 import { parseGitLog, parseNameStatus } from "../turns/git-evidence.js";
+import { readWorkspaceLocator } from "../workspaces/locator.js";
 import {
-  localSourceRef,
   type ProjectEnvironmentService,
   type ProjectManifestSource,
   repositoryPath,
 } from "../workspaces/project-environment.js";
 import type { WorkspaceLocator, WorkspaceRuntime } from "../workspaces/runtime.js";
+import {
+  currentChecks,
+  LOCAL_CHECK_COMPLETED,
+  LOCAL_REVIEW_APPROVED,
+  LOCAL_REVIEW_CHANGES_REQUESTED,
+  LOCAL_REVIEW_TYPES,
+  type LocalReviewStatus,
+  latestReview,
+  reviewStatus,
+} from "./local-review-rules.js";
+import { type LocalWorkspaceSource, localSourceRef } from "./local-workspace.js";
 import { loadProjectSource, type RepositoryAccess } from "./sources.js";
 
 const MAX_COMMITS = 500;
 const MAX_CHANGED_FILES = 2_000;
 const MAX_EXPORT_BYTES = 256 * 1024 * 1024;
-const REVIEW_TYPES = ["local_review.approved", "local_review.changes_requested"];
 
 export type ReviewActor = { type: "user" | "service" | "system"; id: string };
 
-export class LocalReviewError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly statusCode = 409,
-  ) {
-    super(message);
+/** An API error whose code and message are part of the local review contract. */
+export class LocalReviewError extends ApiError {
+  constructor(code: string, message: string, statusCode = 409) {
+    super(statusCode, code, message, undefined, true);
     this.name = "LocalReviewError";
   }
 }
@@ -48,9 +56,11 @@ export class LocalReviewService {
   constructor(
     private readonly db: FacilityDb,
     private readonly runtime: WorkspaceRuntime,
+    /** Local repository access only: this surface never reaches GitHub. */
     private readonly credentials: RepositoryAccess,
     private readonly manifests: ProjectManifestSource,
     private readonly environment: ProjectEnvironmentService,
+    private readonly localWorkspace: LocalWorkspaceSource,
   ) {}
 
   async state(
@@ -77,27 +87,14 @@ export class LocalReviewService {
         `The story is now at ${state.headSha.slice(0, 12)}; review the latest changes before approving`,
       );
     }
-    if (state.currentBranch !== state.branch) {
-      throw new LocalReviewError(
-        "story_branch_not_checked_out",
-        `The workspace is on ${state.currentBranch || "a detached HEAD"}, not the story branch ${state.branch}`,
-      );
-    }
-    if (state.dirty) {
-      throw new LocalReviewError(
-        "uncommitted_changes",
-        "The workspace has uncommitted changes. Ask the agent to commit or discard them before approving.",
-      );
-    }
-    if (state.commits.length === 0) {
-      throw new LocalReviewError("no_changes", "The story branch has no commits to approve");
-    }
+    // Approval is what this request supplies; every other blocker still applies.
+    assertUnblocked(state, ["approval_required"]);
     await appendStoryEvidence(this.db, {
       orgId: input.orgId,
       projectId: input.projectId,
       storyId: input.storyId,
       source: "facility",
-      type: "local_review.approved",
+      type: LOCAL_REVIEW_APPROVED,
       data: {
         repositoryId: context.repository.id,
         branch: state.branch,
@@ -128,7 +125,7 @@ export class LocalReviewService {
       projectId: input.projectId,
       storyId: input.storyId,
       source: "facility",
-      type: "local_review.changes_requested",
+      type: LOCAL_REVIEW_CHANGES_REQUESTED,
       data: {
         repositoryId: context.repository.id,
         branch: state.branch,
@@ -162,7 +159,7 @@ export class LocalReviewService {
         projectId: input.projectId,
         storyId: input.storyId,
         source: "workspace",
-        type: "local_check.completed",
+        type: LOCAL_CHECK_COMPLETED,
         data: {
           repositoryId: context.repository.id,
           commitSha: outcome.commitSha,
@@ -184,14 +181,16 @@ export class LocalReviewService {
     const context = await this.context(input.orgId, input.projectId, input.storyId);
     await this.assertIdle(context);
     const manifest = await this.manifests.load(input.orgId, input.projectId);
-    const refreshed = await this.environment.refreshLocalSource({
-      orgId: input.orgId,
-      projectId: input.projectId,
-      workspace: context.locator,
-      manifest,
-      credentials: context.credentials,
-      repositoryId: input.repositoryId ?? context.repository.id,
-    });
+    const refreshed = await this.localWorkspace.refresh(
+      this.environment.workspaceGit({
+        orgId: input.orgId,
+        projectId: input.projectId,
+        workspace: context.locator,
+        manifest,
+        credentials: context.credentials,
+      }),
+      input.repositoryId ?? context.repository.id,
+    );
     await appendStoryEvidence(this.db, {
       orgId: input.orgId,
       projectId: input.projectId,
@@ -212,31 +211,26 @@ export class LocalReviewService {
     const context = await this.context(input.orgId, input.projectId, input.storyId);
     await this.assertIdle(context);
     const state = await this.describe(context);
-    if (state.approval.status !== "approved" || !state.approval.eventId) {
-      throw new LocalReviewError(
-        state.approval.status === "stale" ? "approval_stale" : "approval_required",
-        state.approval.status === "stale"
-          ? "The approved commit is no longer the story's head; review and approve the latest changes"
-          : "Approve the story's latest commit before exporting it",
-      );
-    }
+    assertUnblocked(state);
+    const reviewEventId = state.approval.eventId;
+    if (!reviewEventId) throw blockerError(state, "approval_required");
     const id = newId("sexp");
+    // Staged at the workspace root, outside the repository; git gets it as an absolute path.
     const file = `.facility/exports/${id}.bundle`;
-    const depth = context.cwd.split("/").length;
-    const relativeFile = `${"../".repeat(depth)}${file}`;
-    await this.exec(context, "sh", ["-c", "mkdir -p .facility/exports"], ".");
+    await this.exec(context, "mkdir", ["-p", ".facility/exports"], ".");
     try {
+      const bundlePath = `${(await this.exec(context, "pwd", [], ".")).trim()}/${file}`;
       await this.git(context, [
         "bundle",
         "create",
         "--quiet",
-        relativeFile,
+        bundlePath,
         `refs/heads/${state.branch}`,
         `^${state.baseSha}`,
       ]);
-      await this.git(context, ["bundle", "verify", "--quiet", relativeFile]);
+      await this.git(context, ["bundle", "verify", "--quiet", bundlePath]);
       // A turn may have committed after the approval was checked; export only the approved commit.
-      const heads = await this.git(context, ["bundle", "list-heads", relativeFile]);
+      const heads = await this.git(context, ["bundle", "list-heads", bundlePath]);
       if (heads.split(/\s+/)[0] !== state.headSha) {
         throw new LocalReviewError(
           "review_commit_mismatch",
@@ -260,46 +254,52 @@ export class LocalReviewService {
         `${state.baseSha}..${state.headSha}`,
       ]);
       const bundleSha256 = createHash("sha256").update(bundle).digest("hex");
-      const row = (
-        await this.db
-          .insert(storyExports)
-          .values({
-            id,
-            orgId: input.orgId,
-            projectId: input.projectId,
-            storyId: input.storyId,
+      // The export and its evidence are recorded together or not at all.
+      const row = await this.db.transaction(async (transaction) => {
+        const tx = transaction as unknown as FacilityDb;
+        const inserted = (
+          await tx
+            .insert(storyExports)
+            .values({
+              id,
+              orgId: input.orgId,
+              projectId: input.projectId,
+              storyId: input.storyId,
+              repositoryId: context.repository.id,
+              reviewEventId,
+              branch: state.branch,
+              baseSha: state.baseSha,
+              headSha: state.headSha,
+              commitCount: state.commits.length,
+              bundle,
+              bundleSha256,
+              patch,
+              createdBy: actor,
+            })
+            .returning(exportColumns)
+        )[0];
+        if (!inserted)
+          throw new LocalReviewError("export_failed", "The export could not be saved", 500);
+        await appendStoryEvidence(tx, {
+          orgId: input.orgId,
+          projectId: input.projectId,
+          storyId: input.storyId,
+          source: "facility",
+          type: "local_export.created",
+          data: {
+            exportId: id,
             repositoryId: context.repository.id,
-            reviewEventId: state.approval.eventId,
-            branch: state.branch,
             baseSha: state.baseSha,
             headSha: state.headSha,
             commitCount: state.commits.length,
-            bundle,
             bundleSha256,
-            patch,
-            createdBy: actor,
-          })
-          .returning(exportColumns)
-      )[0];
-      await appendStoryEvidence(this.db, {
-        orgId: input.orgId,
-        projectId: input.projectId,
-        storyId: input.storyId,
-        source: "facility",
-        type: "local_export.created",
-        data: {
-          exportId: id,
-          repositoryId: context.repository.id,
-          baseSha: state.baseSha,
-          headSha: state.headSha,
-          commitCount: state.commits.length,
-          bundleSha256,
-        },
+          },
+        });
+        return inserted;
       });
-      if (!row) throw new LocalReviewError("export_failed", "The export could not be saved", 500);
       return {
+        ...(await this.describe(context)),
         export: presentExport(row, context.repository.defaultBranch),
-        state: await this.describe(context),
       };
     } finally {
       await this.exec(context, "rm", ["-f", file], ".").catch(() => undefined);
@@ -352,10 +352,11 @@ export class LocalReviewService {
     }
     const credentials = await this.credentials.issue(orgId, projectId);
     const repository = credentials.repositories.find((candidate) => candidate.role === "primary");
-    if (repository?.source !== "local" || !repository.id) {
+    if (!repository) {
       throw new LocalReviewError(
-        "local_review_unavailable",
-        "Local review applies to projects backed by a local repository; GitHub projects review through pull requests",
+        "repository_not_found",
+        "The project has no primary repository",
+        404,
       );
     }
     const workspace = (
@@ -404,7 +405,7 @@ export class LocalReviewService {
       workspace,
       locator,
       credentials,
-      repository: { ...repository, id: repository.id },
+      repository,
       imported,
       cwd: repositoryPath(repository),
     };
@@ -451,7 +452,7 @@ export class LocalReviewService {
           and(
             eq(storyEvidenceEvents.orgId, context.orgId),
             eq(storyEvidenceEvents.storyId, context.story.id),
-            inArray(storyEvidenceEvents.type, REVIEW_TYPES),
+            inArray(storyEvidenceEvents.type, LOCAL_REVIEW_TYPES),
           ),
         )
         .orderBy(desc(storyEvidenceEvents.occurredAt), desc(storyEvidenceEvents.observedAt))
@@ -463,7 +464,7 @@ export class LocalReviewService {
           and(
             eq(storyEvidenceEvents.orgId, context.orgId),
             eq(storyEvidenceEvents.storyId, context.story.id),
-            eq(storyEvidenceEvents.type, "local_check.completed"),
+            eq(storyEvidenceEvents.type, LOCAL_CHECK_COMPLETED),
           ),
         )
         .orderBy(desc(storyEvidenceEvents.occurredAt))
@@ -482,38 +483,17 @@ export class LocalReviewService {
         .limit(50),
     ]);
 
-    const latest = reviewRows[0];
-    const latestData = (latest?.data ?? {}) as {
-      commitSha?: string;
-      note?: string;
-      reviewer?: unknown;
-    };
-    const approvalStatus = !latest
-      ? "none"
-      : latest.type === "local_review.changes_requested"
-        ? "changes_requested"
-        : latestData.commitSha === branchHead && headSha === branchHead && !dirty
-          ? "approved"
-          : "stale";
+    const review = latestReview(reviewRows);
+    const approvalStatus = reviewStatus(review, {
+      sha: branchHead,
+      clean: headSha === branchHead && !dirty,
+    });
+    const checks = [...currentChecks(checkRows, branchHead).values()].map(({ event, data }) => ({
+      ...data,
+      recordedAt: event.occurredAt,
+    }));
 
-    const checks = new Map<string, Record<string, unknown>>();
-    for (const row of checkRows) {
-      const data = row.data as {
-        name?: string;
-        commitSha?: string;
-        dirty?: boolean;
-        commitChanged?: boolean;
-      };
-      // A result counts for a commit only if it ran against exactly that clean tree.
-      if (data.dirty || data.commitChanged) continue;
-      if (!data.name || data.commitSha !== branchHead || checks.has(data.name)) continue;
-      checks.set(data.name, {
-        ...(row.data as Record<string, unknown>),
-        recordedAt: row.occurredAt,
-      });
-    }
-
-    const blockers: string[] = [];
+    const blockers: LocalReviewBlocker[] = [];
     if (currentBranch !== context.branch) blockers.push("story_branch_not_checked_out");
     if (dirty) blockers.push("uncommitted_changes");
     if (commits.length === 0) blockers.push("no_changes");
@@ -537,14 +517,14 @@ export class LocalReviewService {
       commits,
       changedFiles,
       approval: {
-        status: approvalStatus as "none" | "approved" | "stale" | "changes_requested",
-        commitSha: latestData.commitSha ?? null,
-        note: latestData.note ?? null,
-        reviewer: latestData.reviewer ?? null,
-        reviewedAt: latest?.occurredAt ?? null,
-        eventId: latest?.type === "local_review.approved" ? latest.id : null,
+        status: approvalStatus,
+        commitSha: review?.data.commitSha ?? null,
+        note: review?.data.note ?? null,
+        reviewer: review?.data.reviewer ?? null,
+        reviewedAt: review?.event.occurredAt ?? null,
+        eventId: review?.approved ? review.event.id : null,
       },
-      checks: [...checks.values()],
+      checks,
       exports: exportRows.map((row) => presentExport(row, context.repository.defaultBranch)),
       exportable: blockers.length === 0,
       blockers,
@@ -654,23 +634,47 @@ function presentExport(row: ExportRow, defaultBranch: string) {
   };
 }
 
-function workspaceLocator(row: typeof workspaces.$inferSelect): WorkspaceLocator {
-  const environment = row.environment as {
-    image?: string;
-    variables?: Record<string, string>;
-    ports?: WorkspaceLocator["ports"];
-    resources?: WorkspaceLocator["resources"];
-  };
-  if (!row.externalRef || typeof environment.image !== "string") {
-    throw new LocalReviewError("workspace_not_ready", "Workspace is not ready");
+type LocalReviewBlocker =
+  | "story_branch_not_checked_out"
+  | "uncommitted_changes"
+  | "no_changes"
+  | "approval_required";
+
+type ReviewState = {
+  branch: string;
+  currentBranch: string;
+  approval: { status: LocalReviewStatus };
+  blockers: LocalReviewBlocker[];
+};
+
+const BLOCKER_MESSAGES: Record<LocalReviewBlocker, (state: ReviewState) => string> = {
+  story_branch_not_checked_out: (state) =>
+    `The workspace is on ${state.currentBranch || "a detached HEAD"}, not the story branch ${state.branch}`,
+  uncommitted_changes: () =>
+    "The workspace has uncommitted changes. Ask the agent to commit or discard them first.",
+  no_changes: () => "The story branch has no commits yet",
+  approval_required: () => "Approve the story's latest commit before exporting it",
+};
+
+/** The error for one blocker; a stale approval says why it no longer counts. */
+function blockerError(state: ReviewState, blocker: LocalReviewBlocker) {
+  if (blocker === "approval_required" && state.approval.status === "stale") {
+    return new LocalReviewError(
+      "approval_stale",
+      "The approved commit is no longer the story's head; review and approve the latest changes",
+    );
   }
-  return {
-    id: row.id,
-    image: environment.image,
-    environment: environment.variables ?? {},
-    ports: Array.isArray(environment.ports) ? environment.ports : [],
-    resources: environment.resources,
-    externalRef: row.externalRef,
-    volumeRef: row.volumeRef,
-  };
+  return new LocalReviewError(blocker, BLOCKER_MESSAGES[blocker](state));
+}
+
+/** Throws the first blocker that `waived` does not cover. */
+function assertUnblocked(state: ReviewState, waived: LocalReviewBlocker[] = []) {
+  const blocker = state.blockers.find((candidate) => !waived.includes(candidate));
+  if (blocker) throw blockerError(state, blocker);
+}
+
+function workspaceLocator(row: typeof workspaces.$inferSelect): WorkspaceLocator {
+  const locator = readWorkspaceLocator(row);
+  if (!locator) throw new LocalReviewError("workspace_not_ready", "Workspace is not ready");
+  return locator;
 }

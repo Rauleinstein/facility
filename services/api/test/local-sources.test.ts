@@ -5,14 +5,17 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { isLocalAlias } from "../src/repositories/local.js";
 import { newFilesPatch } from "../src/repositories/local-kickstart.js";
+import { base64Chunks, localSourceRef } from "../src/repositories/local-workspace.js";
 import {
   DEFAULT_LOCAL_GIT_IDENTITY,
-  ProjectRepositoryAccess,
+  LocalAgentCatalogSource,
+  LocalRepositoryAccess,
+  type LocalRepositorySnapshots,
+  ProjectRepositorySources,
   projectSource,
+  type RepositoryAccess,
 } from "../src/repositories/sources.js";
 import {
-  base64Chunks,
-  localSourceRef,
   manifestRepositoryName,
   ProjectEnvironmentError,
   parseProjectManifest,
@@ -142,14 +145,26 @@ environment:
         defaultBranch: "main",
       },
     ];
-    const db = fakeRowsDb(rows);
-    const access = new ProjectRepositoryAccess(db, {
+    const github: RepositoryAccess = {
       issue: async () => {
         calls.push("github");
-        throw new Error("GitHub must not be called");
+        return {
+          repositories: [],
+          environment: { GH_TOKEN: "token" },
+          expiresAt: new Date(),
+          source: "github" as const,
+          gitIdentity: { name: "bot", email: "bot@example.com" },
+        };
       },
-    });
-    const issued = await access.issue("org_1", "proj_1");
+    };
+    const sources = (projectRows: unknown[]) => {
+      const db = fakeRowsDb(projectRows);
+      return new ProjectRepositorySources(db, {
+        github: { access: github, manifests: unused, catalog: unused },
+        local: { access: new LocalRepositoryAccess(db), manifests: unused, catalog: unused },
+      });
+    };
+    const issued = await sources(rows).access.issue("org_1", "proj_1");
     expect(calls).toEqual([]);
     expect(issued.environment).toEqual({});
     expect(issued.gitIdentity).toEqual(DEFAULT_LOCAL_GIT_IDENTITY);
@@ -164,19 +179,30 @@ environment:
       },
     ]);
 
-    const github = new ProjectRepositoryAccess(fakeRowsDb([{ ...rows[0], source: "github" }]), {
-      issue: async () => {
-        calls.push("github");
-        return {
-          repositories: [],
-          environment: { GH_TOKEN: "token" },
-          expiresAt: new Date(),
-          gitIdentity: { name: "bot", email: "bot@example.com" },
-        };
+    const githubRows = [{ ...rows[0], source: "github" }];
+    expect((await sources(githubRows).access.issue("org_1", "proj_1")).environment.GH_TOKEN).toBe(
+      "token",
+    );
+    expect(calls).toEqual(["github"]);
+  });
+
+  it("keeps a local project's agent catalog read-only", async () => {
+    const db = fakeRowsDb([{ role: "primary", source: "local" }]);
+    const sources = new ProjectRepositorySources(db, {
+      github: { access: unused, manifests: unused, catalog: unused },
+      local: {
+        access: unused,
+        manifests: unused,
+        catalog: new LocalAgentCatalogSource({} as LocalRepositorySnapshots),
       },
     });
-    expect((await github.issue("org_1", "proj_1")).environment.GH_TOKEN).toBe("token");
-    expect(calls).toEqual(["github"]);
+    await expect(
+      sources.catalog.proposeUpdate?.("org_1", "proj_1", {
+        name: "builder",
+        source: "",
+        expectedCommitSha: "a".repeat(40),
+      } as never),
+    ).rejects.toMatchObject({ code: "agent_catalog_read_only", statusCode: 501 });
   });
 
   it("encodes bundles in bounded chunks that concatenate to the whole encoding", () => {
@@ -211,6 +237,12 @@ environment:
     }
   });
 });
+
+/** A source service a test never reaches. */
+const unused = {
+  issue: () => Promise.reject(new Error("unused")),
+  load: () => Promise.reject(new Error("unused")),
+} as never;
 
 function fakeRowsDb(rows: unknown[]) {
   const chain = {

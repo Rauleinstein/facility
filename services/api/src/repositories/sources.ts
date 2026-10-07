@@ -4,16 +4,16 @@ import {
   AgentCatalogError,
   type AgentCatalogSnapshot,
   type AgentCatalogSource,
-  type AgentCatalogUpdate,
 } from "../agents/catalog.js";
 import { isAgentManifestPath, isProjectSkillPath } from "../agents/catalog-files.js";
+import { ApiError } from "../errors.js";
 import type { GithubGitIdentity } from "../github/git-identity.js";
 import type {
-  GithubWorkspaceCredentials,
+  RepositorySource,
+  WorkspaceCredentials,
   WorkspaceRepository,
-} from "../github/workspace-credentials.js";
+} from "../workspaces/credentials.js";
 import {
-  type LocalSnapshotProvider,
   type PinnedRevisions,
   ProjectEnvironmentError,
   type ProjectManifest,
@@ -25,10 +25,10 @@ import {
   LocalRepositoryError,
   type LocalRepositoryHost,
 } from "./local.js";
+import type { LocalSnapshotProvider } from "./local-workspace.js";
 
+export type { RepositorySource };
 export { DEFAULT_LOCAL_GIT_IDENTITY };
-
-export type RepositorySource = "github" | "local";
 export type ProjectRepositoryRow = typeof projectRepositories.$inferSelect;
 
 /** Local repositories share one owner sentinel that GitHub logins cannot use. */
@@ -36,7 +36,7 @@ export const LOCAL_REPOSITORY_OWNER = "_local";
 
 /** Repository access that a workspace needs before preparation. */
 export interface RepositoryAccess {
-  issue(orgId: string, projectId: string): Promise<GithubWorkspaceCredentials>;
+  issue(orgId: string, projectId: string): Promise<WorkspaceCredentials>;
 }
 
 export async function projectRepositoryRows(db: FacilityDb, orgId: string, projectId: string) {
@@ -67,21 +67,79 @@ export function projectSource(rows: Array<Pick<ProjectRepositoryRow, "role" | "s
   return (rows.find((row) => row.role === "primary")?.source ?? "github") as RepositorySource;
 }
 
+/** Refuses to add a `source` repository to a project whose repositories use the other source. */
+export function assertProjectSource(
+  existing: Array<Pick<ProjectRepositoryRow, "source">>,
+  source: RepositorySource,
+) {
+  if (existing.some((repository) => repository.source !== source)) {
+    const [uses, adding] = source === "local" ? ["GitHub", "local"] : ["local", "GitHub"];
+    throw new ApiError(
+      409,
+      "repository_sources_mixed",
+      `This project uses ${uses} repositories; create a separate project for ${adding} repositories`,
+    );
+  }
+}
+
 export async function loadProjectSource(db: FacilityDb, orgId: string, projectId: string) {
   return projectSource(await projectRepositoryRows(db, orgId, projectId));
 }
 
-/** Issues GitHub credentials only for GitHub projects. Local projects never reach GitHub. */
-export class ProjectRepositoryAccess implements RepositoryAccess {
+/** Repository access, configuration and agent catalog for one repository source. */
+export type RepositorySourceServices = {
+  access: RepositoryAccess;
+  manifests: ProjectManifestSource;
+  catalog: AgentCatalogSource;
+};
+
+/**
+ * The one place that picks a project's repository source. Each project-scoped
+ * service resolves the project's source and delegates to that source's
+ * implementation, so a local project never reaches GitHub.
+ */
+export class ProjectRepositorySources {
+  readonly access: RepositoryAccess;
+  readonly manifests: ProjectManifestSource;
+  readonly catalog: AgentCatalogSource;
+
+  constructor(db: FacilityDb, sources: Record<RepositorySource, RepositorySourceServices>) {
+    const of = async (orgId: string, projectId: string) =>
+      sources[await loadProjectSource(db, orgId, projectId)];
+    this.access = {
+      issue: async (orgId, projectId) =>
+        (await of(orgId, projectId)).access.issue(orgId, projectId),
+    };
+    this.manifests = {
+      load: async (orgId, projectId, pinned) =>
+        (await of(orgId, projectId)).manifests.load(orgId, projectId, pinned),
+    };
+    this.catalog = {
+      load: async (orgId, projectId) => (await of(orgId, projectId)).catalog.load(orgId, projectId),
+      proposeUpdate: async (orgId, projectId, input) => {
+        const { catalog } = await of(orgId, projectId);
+        if (!catalog.proposeUpdate) {
+          throw new AgentCatalogError(
+            "agent_catalog_read_only",
+            "This agent catalog source does not support Git proposals",
+            501,
+          );
+        }
+        return catalog.proposeUpdate(orgId, projectId, input);
+      },
+    };
+  }
+}
+
+/** Local preparation needs no repository credential. Model credentials stay separate. */
+export class LocalRepositoryAccess implements RepositoryAccess {
   constructor(
     private readonly db: FacilityDb,
-    private readonly github: RepositoryAccess,
-    private readonly localIdentity: GithubGitIdentity = DEFAULT_LOCAL_GIT_IDENTITY,
+    private readonly identity: GithubGitIdentity = DEFAULT_LOCAL_GIT_IDENTITY,
   ) {}
 
-  async issue(orgId: string, projectId: string): Promise<GithubWorkspaceCredentials> {
+  async issue(orgId: string, projectId: string): Promise<WorkspaceCredentials> {
     const rows = await projectRepositoryRows(this.db, orgId, projectId);
-    if (projectSource(rows) === "github") return this.github.issue(orgId, projectId);
     if (!rows.some((row) => row.role === "primary")) {
       throw new ProjectEnvironmentError(
         "project_repositories_missing",
@@ -89,6 +147,7 @@ export class ProjectRepositoryAccess implements RepositoryAccess {
       );
     }
     return {
+      source: "local",
       repositories: rows.map(
         (row): WorkspaceRepository => ({
           id: row.id,
@@ -99,10 +158,9 @@ export class ProjectRepositoryAccess implements RepositoryAccess {
           role: row.role as "primary" | "related",
         }),
       ),
-      // Local preparation needs no repository credential. Model credentials stay separate.
       environment: {},
       expiresAt: new Date(8_640_000_000_000_000),
-      gitIdentity: this.localIdentity,
+      gitIdentity: this.identity,
     };
   }
 }
@@ -130,14 +188,14 @@ export class LocalRepositorySnapshots implements LocalSnapshotProvider {
         )
         .limit(1)
     )[0];
-    if (row?.source !== "local" || !row.sourcePath) {
+    if (row?.source !== "local" || !row.sourcePath || !row.sourceRepository) {
       throw new LocalRepositoryError(
         "local_repository_not_found",
         "Local repository not found in this project",
         404,
       );
     }
-    return row as ProjectRepositoryRow & { sourcePath: string };
+    return { ...row, sourcePath: row.sourcePath, sourceRepository: row.sourceRepository };
   }
 
   async resolve(orgId: string, projectId: string, repositoryId?: string) {
@@ -222,46 +280,13 @@ export class LocalAgentCatalogSource implements AgentCatalogSource {
       );
     }
   }
-}
 
-export class SourceAwareProjectManifestSource implements ProjectManifestSource {
-  constructor(
-    private readonly db: FacilityDb,
-    private readonly github: ProjectManifestSource,
-    private readonly local: ProjectManifestSource,
-  ) {}
-
-  async load(orgId: string, projectId: string, pinned?: PinnedRevisions) {
-    return (await loadProjectSource(this.db, orgId, projectId)) === "local"
-      ? this.local.load(orgId, projectId, pinned)
-      : this.github.load(orgId, projectId);
-  }
-}
-
-export class SourceAwareAgentCatalogSource implements AgentCatalogSource {
-  constructor(
-    private readonly db: FacilityDb,
-    private readonly github: AgentCatalogSource,
-    private readonly local: AgentCatalogSource,
-  ) {}
-
-  async load(orgId: string, projectId: string) {
-    return (await loadProjectSource(this.db, orgId, projectId)) === "local"
-      ? this.local.load(orgId, projectId)
-      : this.github.load(orgId, projectId);
-  }
-
-  async proposeUpdate(orgId: string, projectId: string, input: AgentCatalogUpdate) {
-    if (
-      (await loadProjectSource(this.db, orgId, projectId)) === "local" ||
-      !this.github.proposeUpdate
-    ) {
-      throw new AgentCatalogError(
-        "agent_catalog_read_only",
-        "Edit .agents/ in the local repository and commit the change; Facility reads the committed catalog",
-        501,
-      );
-    }
-    return this.github.proposeUpdate(orgId, projectId, input);
+  /** The committed catalog is the source of truth; Facility never writes to it. */
+  async proposeUpdate(): Promise<never> {
+    throw new AgentCatalogError(
+      "agent_catalog_read_only",
+      "Edit .agents/ in the local repository and commit the change; Facility reads the committed catalog",
+      501,
+    );
   }
 }

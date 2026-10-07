@@ -1,17 +1,14 @@
-import { basename } from "node:path";
-import { can, newId } from "@facility/core";
-import { type FacilityDb, projectRepositories, projects } from "@facility/db";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { can } from "@facility/core";
+import { type FacilityDb, projects } from "@facility/db";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { AgentCatalogError } from "../../agents/catalog.js";
 import { ApiError, notFound } from "../../errors.js";
-import { COMMIT_SHA, isLocalAlias, LocalRepositoryError } from "../../repositories/local.js";
+import { COMMIT_SHA } from "../../repositories/local.js";
 import { createLocalKickstartBranch, localKickstart } from "../../repositories/local-kickstart.js";
-import { LocalReviewError } from "../../repositories/local-review.js";
-import { LOCAL_REPOSITORY_OWNER } from "../../repositories/sources.js";
-import { ProjectEnvironmentError } from "../../workspaces/project-environment.js";
-import { principal, type V1RouteContext } from "./shared.js";
+import type { ReviewActor } from "../../repositories/local-review.js";
+import { registerLocalRepository } from "../../repositories/registration.js";
+import { DateValue, principal, type V1RouteContext } from "./shared.js";
 
 const ProjectParams = z.object({ projectId: z.string() });
 const RepositoryParams = z.object({ projectId: z.string(), repoId: z.string() });
@@ -45,7 +42,79 @@ const KickstartAnswers = z.object({
     .optional(),
 });
 
-type Actor = { type: "user" | "service" | "system"; id: string };
+const ReviewActorSchema = z.object({
+  type: z.enum(["user", "service", "system"]),
+  id: z.string(),
+});
+
+const LocalExportSchema = z.object({
+  id: z.string(),
+  branch: z.string(),
+  baseSha: z.string(),
+  headSha: z.string(),
+  commitCount: z.number().int(),
+  bundleSha256: z.string(),
+  createdBy: ReviewActorSchema,
+  createdAt: DateValue,
+  /** Branch the import instructions create in the user's repository. */
+  reviewBranch: z.string(),
+  instructions: z.array(z.string()),
+  patchInstructions: z.array(z.string()),
+});
+
+/** Every local review endpoint answers with this state; mutations add their own result. */
+const LocalReviewStateSchema = z.object({
+  repository: z.object({ id: z.string(), name: z.string(), defaultBranch: z.string() }),
+  branch: z.string(),
+  currentBranch: z.string(),
+  headSha: z.string(),
+  baseSha: z.string(),
+  sourceRevision: z.string(),
+  initialSourceRevision: z.string(),
+  sourceImportedAt: z.string(),
+  dirty: z.boolean(),
+  uncommitted: z.array(z.object({ status: z.string(), path: z.string() })),
+  commits: z.array(
+    z.object({ sha: z.string(), author: z.string(), authoredAt: z.string(), subject: z.string() }),
+  ),
+  changedFiles: z.array(
+    z.object({ status: z.string(), path: z.string(), previousPath: z.string().optional() }),
+  ),
+  approval: z.object({
+    status: z.enum(["none", "approved", "stale", "changes_requested"]),
+    commitSha: z.string().nullable(),
+    note: z.string().nullable(),
+    reviewer: ReviewActorSchema.nullable(),
+    reviewedAt: DateValue.nullable(),
+    eventId: z.string().nullable(),
+  }),
+  checks: z.array(
+    z.object({
+      name: z.string(),
+      command: z.string(),
+      commitSha: z.string(),
+      exitCode: z.number(),
+      durationMs: z.number(),
+      stdout: z.string(),
+      stderr: z.string(),
+      dirty: z.boolean(),
+      commitChanged: z.boolean(),
+      recordedAt: DateValue,
+    }),
+  ),
+  exports: z.array(LocalExportSchema),
+  exportable: z.boolean(),
+  blockers: z.array(
+    z.enum([
+      "story_branch_not_checked_out",
+      "uncommitted_changes",
+      "no_changes",
+      "approval_required",
+    ]),
+  ),
+});
+
+const LocalReviewResponse = { 200: LocalReviewStateSchema };
 
 export async function registerLocalRepositoryRoutes(app: FastifyInstance, context: V1RouteContext) {
   const { db } = context;
@@ -80,97 +149,13 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       const { projectId } = request.params as z.infer<typeof ProjectParams>;
       const body = request.body as z.infer<typeof RegisterLocalRepositoryBody>;
       await activeProject(db, actor.orgId, projectId);
-      // Validation reads Git metadata only; no hook, setup, or repository command runs.
-      const inspection = await translate(() => host().inspect(body.path, body.defaultBranch));
-      const alias = body.alias ?? basename(inspection.path).replace(/\.git$/i, "");
-      if (!isLocalAlias(alias)) {
-        throw new ApiError(
-          400,
-          "local_repository_alias_invalid",
-          "Use an alias of letters, digits, '.', '_' or '-' that does not end in .git",
-        );
-      }
-      const row = await db.transaction(async (transaction) => {
-        const tx = transaction as unknown as FacilityDb;
-        await tx.execute(
-          sql`select pg_advisory_xact_lock(hashtext(${`${actor.orgId}:${projectId}`}))`,
-        );
-        // One organization owns a host repository, through any of its paths or
-        // worktrees. The database trigger enforces this; the check gives a clear error.
-        const claimed = await tx
-          .select({ id: projectRepositories.id })
-          .from(projectRepositories)
-          .where(
-            and(
-              eq(projectRepositories.source, "local"),
-              eq(projectRepositories.sourceRepository, inspection.repositoryKey),
-              ne(projectRepositories.orgId, actor.orgId),
-            ),
-          )
-          .limit(1);
-        if (claimed.length > 0) {
-          throw new ApiError(
-            409,
-            "local_repository_claimed",
-            "This repository is registered by another organization",
-          );
-        }
-        const existing = await tx
-          .select({
-            role: projectRepositories.role,
-            source: projectRepositories.source,
-            name: projectRepositories.name,
-            sourceRepository: projectRepositories.sourceRepository,
-          })
-          .from(projectRepositories)
-          .where(
-            and(
-              eq(projectRepositories.orgId, actor.orgId),
-              eq(projectRepositories.projectId, projectId),
-            ),
-          );
-        if (existing.some((repository) => repository.source !== "local")) {
-          throw new ApiError(
-            409,
-            "repository_sources_mixed",
-            "This project uses GitHub repositories; create a separate project for local repositories",
-          );
-        }
-        if (
-          existing.some(
-            (repository) =>
-              repository.sourceRepository === inspection.repositoryKey ||
-              repository.name.toLowerCase() === alias.toLowerCase(),
-          )
-        ) {
-          throw new ApiError(
-            409,
-            "local_repository_exists",
-            "This project already has a local repository with that path or alias",
-          );
-        }
-        return (
-          await tx
-            .insert(projectRepositories)
-            .values({
-              id: newId("repo"),
-              orgId: actor.orgId,
-              projectId,
-              installationId: null,
-              owner: LOCAL_REPOSITORY_OWNER,
-              name: alias,
-              defaultBranch: inspection.defaultBranch,
-              role: existing.some((repository) => repository.role === "primary")
-                ? "related"
-                : "primary",
-              source: "local",
-              sourcePath: inspection.path,
-              sourceRepository: inspection.repositoryKey,
-            })
-            .returning()
-        )[0];
+      const { row, inspection } = await registerLocalRepository(db, host(), {
+        orgId: actor.orgId,
+        projectId,
+        path: body.path,
+        alias: body.alias,
+        defaultBranch: body.defaultBranch,
       });
-      if (!row) throw new ApiError(500, "insert_failed", "Could not register repository");
       return {
         ...row,
         headSha: inspection.headSha,
@@ -197,10 +182,8 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       const actor = principal(request);
       const { projectId, repoId } = request.params as z.infer<typeof RepositoryParams>;
       const body = request.body as { answers: z.infer<typeof KickstartAnswers> };
-      const repository = await translate(() =>
-        domain.localRepositories.repository(actor.orgId, projectId, repoId),
-      );
-      return translate(() => localKickstart(host(), repository, body.answers));
+      const repository = await domain.localRepositories.repository(actor.orgId, projectId, repoId);
+      return localKickstart(host(), repository, body.answers);
     },
   );
 
@@ -219,16 +202,12 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       const { projectId, repoId } = request.params as z.infer<typeof RepositoryParams>;
       const body = request.body as { answers: z.infer<typeof KickstartAnswers> };
       await activeProject(db, actor.orgId, projectId);
-      const repository = await translate(() =>
-        domain.localRepositories.repository(actor.orgId, projectId, repoId),
-      );
-      return translate(() =>
-        createLocalKickstartBranch(
-          host(),
-          repository,
-          body.answers,
-          context.config.localGitIdentity,
-        ),
+      const repository = await domain.localRepositories.repository(actor.orgId, projectId, repoId);
+      return createLocalKickstartBranch(
+        host(),
+        repository,
+        body.answers,
+        context.config.localGitIdentity,
       );
     },
   );
@@ -239,18 +218,16 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
     reviewBase,
     {
       config: { permission: "stories:read" },
-      schema: { params: StoryParams, operationId: "getLocalReview" },
+      schema: { params: StoryParams, response: LocalReviewResponse, operationId: "getLocalReview" },
     },
     async (request, reply) => {
       const actor = principal(request);
       const { projectId, storyId } = request.params as z.infer<typeof StoryParams>;
       reply.header("cache-control", "private, no-store");
       // Reading never resumes suspended compute for someone who cannot run workspaces.
-      return translate(() =>
-        domain.localReview.state(actor.orgId, projectId, storyId, {
-          wake: can(actor.permissions, "workspaces:execute"),
-        }),
-      );
+      return domain.localReview.state(actor.orgId, projectId, storyId, {
+        wake: can(actor.permissions, "workspaces:execute"),
+      });
     },
   );
 
@@ -261,6 +238,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       schema: {
         params: StoryParams,
         body: z.object({ commit_sha: Sha, note: z.string().max(4_000).optional() }),
+        response: LocalReviewResponse,
         operationId: "approveLocalReview",
       },
     },
@@ -268,12 +246,10 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       const actor = principal(request);
       const { projectId, storyId } = request.params as z.infer<typeof StoryParams>;
       const body = request.body as { commit_sha: string; note?: string };
-      return translate(() =>
-        domain.localReview.approve(
-          { orgId: actor.orgId, projectId, storyId, commitSha: body.commit_sha, note: body.note },
-          reviewActor(actor),
-          { wake: can(actor.permissions, "workspaces:execute") },
-        ),
+      return domain.localReview.approve(
+        { orgId: actor.orgId, projectId, storyId, commitSha: body.commit_sha, note: body.note },
+        reviewActor(actor),
+        { wake: can(actor.permissions, "workspaces:execute") },
       );
     },
   );
@@ -285,6 +261,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       schema: {
         params: StoryParams,
         body: z.object({ commit_sha: Sha.optional(), note: z.string().trim().min(1).max(4_000) }),
+        response: LocalReviewResponse,
         operationId: "requestLocalReviewChanges",
       },
     },
@@ -292,12 +269,10 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       const actor = principal(request);
       const { projectId, storyId } = request.params as z.infer<typeof StoryParams>;
       const body = request.body as { commit_sha?: string; note: string };
-      return translate(() =>
-        domain.localReview.requestChanges(
-          { orgId: actor.orgId, projectId, storyId, commitSha: body.commit_sha, note: body.note },
-          reviewActor(actor),
-          { wake: can(actor.permissions, "workspaces:execute") },
-        ),
+      return domain.localReview.requestChanges(
+        { orgId: actor.orgId, projectId, storyId, commitSha: body.commit_sha, note: body.note },
+        reviewActor(actor),
+        { wake: can(actor.permissions, "workspaces:execute") },
       );
     },
   );
@@ -306,14 +281,16 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
     `${reviewBase}/checks`,
     {
       config: { permission: "workspaces:execute", auditAction: "story.local_checks.run" },
-      schema: { params: StoryParams, operationId: "runLocalReviewChecks" },
+      schema: {
+        params: StoryParams,
+        response: LocalReviewResponse,
+        operationId: "runLocalReviewChecks",
+      },
     },
     async (request) => {
       const actor = principal(request);
       const { projectId, storyId } = request.params as z.infer<typeof StoryParams>;
-      return translate(() =>
-        domain.localReview.runChecks({ orgId: actor.orgId, projectId, storyId }),
-      );
+      return domain.localReview.runChecks({ orgId: actor.orgId, projectId, storyId });
     },
   );
 
@@ -324,6 +301,16 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       schema: {
         params: StoryParams,
         body: z.object({ repository_id: z.string().min(1).max(200).optional() }).default({}),
+        response: {
+          200: LocalReviewStateSchema.extend({
+            refresh: z.object({
+              previous: z.string(),
+              revision: z.string(),
+              defaultBranchUpdated: z.boolean(),
+              diverged: z.boolean(),
+            }),
+          }),
+        },
         operationId: "refreshLocalReviewSource",
       },
     },
@@ -331,14 +318,12 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       const actor = principal(request);
       const { projectId, storyId } = request.params as z.infer<typeof StoryParams>;
       const body = request.body as { repository_id?: string };
-      return translate(() =>
-        domain.localReview.refreshSource({
-          orgId: actor.orgId,
-          projectId,
-          storyId,
-          repositoryId: body.repository_id,
-        }),
-      );
+      return domain.localReview.refreshSource({
+        orgId: actor.orgId,
+        projectId,
+        storyId,
+        repositoryId: body.repository_id,
+      });
     },
   );
 
@@ -346,16 +331,18 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
     `${reviewBase}/exports`,
     {
       config: { permission: "workspaces:execute", auditAction: "story.local_export.created" },
-      schema: { params: StoryParams, operationId: "createLocalReviewExport" },
+      schema: {
+        params: StoryParams,
+        response: { 200: LocalReviewStateSchema.extend({ export: LocalExportSchema }) },
+        operationId: "createLocalReviewExport",
+      },
     },
     async (request) => {
       const actor = principal(request);
       const { projectId, storyId } = request.params as z.infer<typeof StoryParams>;
-      return translate(() =>
-        domain.localReview.createExport(
-          { orgId: actor.orgId, projectId, storyId },
-          reviewActor(actor),
-        ),
+      return domain.localReview.createExport(
+        { orgId: actor.orgId, projectId, storyId },
+        reviewActor(actor),
       );
     },
   );
@@ -373,9 +360,12 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       async (request, reply) => {
         const actor = principal(request);
         const { projectId, storyId, exportId } = request.params as z.infer<typeof ExportParams>;
-        const row = await translate(() =>
-          domain.localReview.exportFile({ orgId: actor.orgId, projectId, storyId, exportId }),
-        );
+        const row = await domain.localReview.exportFile({
+          orgId: actor.orgId,
+          projectId,
+          storyId,
+          exportId,
+        });
         reply.header("cache-control", "private, no-store");
         reply.header("x-content-type-options", "nosniff");
         reply.header(
@@ -408,23 +398,6 @@ async function activeProject(db: FacilityDb, orgId: string, projectId: string) {
   }
 }
 
-function reviewActor(actor: ReturnType<typeof principal>): Actor {
+function reviewActor(actor: ReturnType<typeof principal>): ReviewActor {
   return { type: actor.type === "key" ? "service" : "user", id: actor.id };
-}
-
-async function translate<T>(operation: () => Promise<T>): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    if (error instanceof LocalRepositoryError || error instanceof LocalReviewError) {
-      throw new ApiError(error.statusCode, error.code, error.message, undefined, true);
-    }
-    if (error instanceof AgentCatalogError) {
-      throw new ApiError(error.statusCode, error.code, error.message);
-    }
-    if (error instanceof ProjectEnvironmentError) {
-      throw new ApiError(409, error.code, error.message);
-    }
-    throw error;
-  }
 }

@@ -14,6 +14,7 @@ import { IntegrationStateBody, updateIntegrationState } from "../../stories/inte
 import { readStoryLifecycle } from "../../stories/lifecycle.js";
 import { provisionalTitle, resolveDefaultAgent } from "../../stories/phase.js";
 import type { AppConfig } from "../../types.js";
+import { readWorkspaceLocator } from "../../workspaces/locator.js";
 import { projectWorkspaceInput } from "../../workspaces/project-environment.js";
 import {
   parseWorkspaceVariables,
@@ -1038,35 +1039,10 @@ function workspaceMetrics(
   };
 }
 
-function workspaceLocator(row: {
-  id: string;
-  externalRef: string | null;
-  volumeRef: string;
-  environment: unknown;
-}) {
-  const environment = row.environment as {
-    image?: string;
-    variables?: Record<string, string>;
-    ports?: Array<{
-      service: string;
-      port: number;
-      protocol?: "http" | "https";
-      websocket?: boolean;
-    }>;
-    resources?: { cpu: number; memoryMb: number };
-  };
-  if (!row.externalRef || !environment.image) {
-    throw new ApiError(409, "workspace_not_ready", "Workspace is not ready");
-  }
-  return {
-    id: row.id,
-    externalRef: row.externalRef,
-    volumeRef: row.volumeRef,
-    image: environment.image,
-    environment: environment.variables,
-    ports: environment.ports,
-    resources: environment.resources,
-  };
+function workspaceLocator(row: Parameters<typeof readWorkspaceLocator>[0]) {
+  const locator = readWorkspaceLocator(row);
+  if (!locator) throw new ApiError(409, "workspace_not_ready", "Workspace is not ready");
+  return locator;
 }
 
 async function translate<T>(operation: () => Promise<T>): Promise<T> {

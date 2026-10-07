@@ -448,61 +448,13 @@ export type LocalKickstartBranch = {
   /** Review-and-merge steps, run inside the repository. */
   instructions: string[];
 };
-export type LocalReviewActor = { type: "user" | "service" | "system"; id: string };
-export type LocalReviewCheck = {
-  name: string;
-  command: string;
-  commitSha: string;
-  exitCode: number;
-  durationMs: number;
-  stdout: string;
-  stderr: string;
-  dirty: boolean;
-  commitChanged: boolean;
-  recordedAt: string;
-};
-export type LocalExport = {
-  id: string;
-  branch: string;
-  baseSha: string;
-  headSha: string;
-  commitCount: number;
-  bundleSha256: string;
-  createdBy: LocalReviewActor;
-  createdAt: string;
-  /** Branch the import instructions create in the user's repository. */
-  reviewBranch: string;
-  instructions: string[];
-  patchInstructions: string[];
-};
-export type LocalReviewState = {
-  repository: { id: string; name: string; defaultBranch: string };
-  branch: string;
-  currentBranch: string;
-  headSha: string;
-  baseSha: string;
-  sourceRevision: string;
-  initialSourceRevision: string;
-  sourceImportedAt: string;
-  dirty: boolean;
-  uncommitted: Array<{ status: string; path: string }>;
-  commits: Array<{ sha: string; author: string; authoredAt: string; subject: string }>;
-  changedFiles: Array<{ status: string; path: string; previousPath?: string }>;
-  approval: {
-    status: "none" | "approved" | "stale" | "changes_requested";
-    commitSha: string | null;
-    note: string | null;
-    reviewer: LocalReviewActor | null;
-    reviewedAt: string | null;
-    eventId: string | null;
-  };
-  checks: LocalReviewCheck[];
-  exports: LocalExport[];
-  exportable: boolean;
-  blockers: Array<
-    "story_branch_not_checked_out" | "uncommitted_changes" | "no_changes" | "approval_required"
-  >;
-};
+export type LocalReviewState = FacilityGeneratedResponse<
+  "GET",
+  "/v1/projects/{projectId}/workspace-stories/{storyId}/local-review"
+>;
+export type LocalReviewActor = NonNullable<LocalReviewState["approval"]["reviewer"]>;
+export type LocalReviewCheck = ArrayItem<LocalReviewState["checks"]>;
+export type LocalExport = ArrayItem<LocalReviewState["exports"]>;
 
 export type ProjectBudget = FacilityGeneratedResponse<"GET", "/v1/projects/{projectId}/budget">;
 export type ProjectObservability = FacilityGeneratedResponse<

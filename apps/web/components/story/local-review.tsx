@@ -53,27 +53,26 @@ export function LocalReview({
   async function run(action: Action, method: "GET" | "POST", path = "", body?: unknown) {
     setBusy(action);
     setError("");
-    const result = await clientApi<LocalReviewState | { state: LocalReviewState }>(
-      method,
-      `${base}${path}`,
-      body,
-    );
+    // Every review endpoint answers with the current state.
+    const result = await clientApi<LocalReviewState>(method, `${base}${path}`, body);
     setBusy(null);
     if (!result.ok) {
       setError(result.message);
       return false;
     }
-    setState("state" in result.data ? result.data.state : result.data);
+    setState(result.data);
     return true;
   }
 
   // A finished turn moves the story head: reload what is shown so approval targets it.
+  // Only a new revision reloads; opening the panel loads on its own.
   const shownRevision = useRef(revision);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `run` and `opened` are read, not tracked
   useEffect(() => {
     if (shownRevision.current === revision) return;
     shownRevision.current = revision;
     if (opened) void run("load", "GET");
-  });
+  }, [revision]);
 
   const downloads = `/api${base}/exports`;
   return (

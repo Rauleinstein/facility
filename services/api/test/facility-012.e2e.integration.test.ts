@@ -32,6 +32,7 @@ import { GithubWorkspaceCredentialBroker } from "../src/github/workspace-credent
 import { CostBudgetService } from "../src/insights/costs.js";
 import { LocalRepositoryHost } from "../src/repositories/local.js";
 import { LocalReviewService } from "../src/repositories/local-review.js";
+import { LocalWorkspaceSource } from "../src/repositories/local-workspace.js";
 import { LocalRepositorySnapshots } from "../src/repositories/sources.js";
 import { ProjectBacklogService } from "../src/stories/backlog.js";
 import { StoryWorkspaceService } from "../src/stories/service.js";
@@ -248,6 +249,10 @@ environment:
       projectManifests,
       environment,
     );
+    const localRepositories = new LocalRepositorySnapshots(
+      db,
+      new LocalRepositoryHost({ roots: [] }),
+    );
     const domain: StoryDomain = {
       variables: new WorkspaceVariablesService(db, config.secretMasterKey),
       runtime,
@@ -255,8 +260,15 @@ environment:
       catalog,
       credentials,
       projectManifests: projectManifests as StoryDomain["projectManifests"],
-      localRepositories: new LocalRepositorySnapshots(db, new LocalRepositoryHost({ roots: [] })),
-      localReview: new LocalReviewService(db, runtime, credentials, projectManifests, environment),
+      localRepositories,
+      localReview: new LocalReviewService(
+        db,
+        runtime,
+        credentials,
+        projectManifests,
+        environment,
+        new LocalWorkspaceSource(db, runtime, localRepositories),
+      ),
       environment,
       engines,
       dispatcher,

@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize, relative, sep } from "node:path";
+import { ApiError } from "../errors.js";
 import { isSafeGitBranch } from "../workspaces/git-branch.js";
 
 /** Local repository access is disabled until an operator approves at least one root. */
@@ -35,18 +36,14 @@ export function isLocalAlias(value: string) {
 }
 
 /** A registered repository: its canonical path and the Git common directory recorded with it. */
-export type LocalSourceRefObject = { sourcePath: string; sourceRepository?: string | null };
-export type LocalSourceRef = string | LocalSourceRefObject;
+export type LocalSource = { sourcePath: string; sourceRepository: string };
 
 export type LocalTreeEntry = { mode: string; type: string; oid: string; path: string };
 
-export class LocalRepositoryError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly statusCode = 400,
-  ) {
-    super(message);
+/** An API error whose code and message are part of the local repository contract. */
+export class LocalRepositoryError extends ApiError {
+  constructor(code: string, message: string, statusCode = 400) {
+    super(statusCode, code, message, undefined, true);
     this.name = "LocalRepositoryError";
   }
 }
@@ -105,19 +102,19 @@ export class LocalRepositoryHost {
       defaultBranch,
       headSha,
       repositoryKey,
-      warnings: await this.warnings(path, headSha),
+      warnings: await this.contentWarnings(path, headSha),
     };
   }
 
   /**
-   * Re-checks a registered path before any read. With the key recorded at
-   * registration, a path that now belongs to a different repository is refused.
+   * Re-checks a registered repository before any read: its path must still be
+   * canonical and still belong to the repository recorded at registration.
    */
-  async verify(storedPath: string, repositoryKey?: string): Promise<string> {
+  async verify(source: LocalSource): Promise<string> {
     this.assertEnabled();
-    const path = await this.canonical(storedPath);
-    const key = path === storedPath ? await this.assertRepositoryRoot(path) : undefined;
-    if (!key || (repositoryKey !== undefined && key !== repositoryKey)) {
+    const path = await this.canonical(source.sourcePath);
+    const key = path === source.sourcePath ? await this.assertRepositoryRoot(path) : undefined;
+    if (key !== source.sourceRepository) {
       throw new LocalRepositoryError(
         "local_repository_path_changed",
         "The registered repository path now resolves to a different location; register it again",
@@ -127,24 +124,13 @@ export class LocalRepositoryHost {
     return path;
   }
 
-  /** Verifies a registered repository given its stored path and, when recorded, its key. */
-  private open(source: LocalSourceRef) {
-    return typeof source === "string"
-      ? this.verify(source)
-      : this.verify(source.sourcePath, source.sourceRepository ?? undefined);
-  }
-
-  async resolve(source: LocalSourceRef, branch: string): Promise<string> {
-    const path = await this.open(source);
+  async resolve(source: LocalSource, branch: string): Promise<string> {
+    const path = await this.verify(source);
     return this.resolveBranch(path, branch);
   }
 
-  async readFile(
-    source: LocalSourceRef,
-    commit: string,
-    file: string,
-  ): Promise<string | undefined> {
-    const path = await this.open(source);
+  async readFile(source: LocalSource, commit: string, file: string): Promise<string | undefined> {
+    const path = await this.verify(source);
     assertCommit(commit);
     const entry = (await this.tree(path, commit, [file])).find((item) => item.path === file);
     if (entry?.type !== "blob" || !["100644", "100755"].includes(entry.mode)) {
@@ -155,12 +141,12 @@ export class LocalRepositoryHost {
 
   /** Lists regular files and symlinks under the given tree prefixes at a pinned commit. */
   async files(
-    source: LocalSourceRef,
+    source: LocalSource,
     commit: string,
     prefixes: string[],
     include: (path: string) => boolean = () => true,
   ) {
-    const path = await this.open(source);
+    const path = await this.verify(source);
     assertCommit(commit);
     const entries = await this.tree(path, commit, prefixes);
     const files = new Map<string, string>();
@@ -173,8 +159,8 @@ export class LocalRepositoryHost {
   }
 
   /** Paths of files at a pinned commit, without reading their content. */
-  async paths(source: LocalSourceRef, commit: string, prefixes: string[] = []) {
-    const path = await this.open(source);
+  async paths(source: LocalSource, commit: string, prefixes: string[] = []) {
+    const path = await this.verify(source);
     assertCommit(commit);
     return (await this.tree(path, commit, prefixes))
       .filter((entry) => entry.type === "blob")
@@ -186,8 +172,8 @@ export class LocalRepositoryHost {
    * only ref is refs/facility/import. The copy happens in a Facility-owned
    * staging repository; the source repository is only read.
    */
-  async snapshot(source: LocalSourceRef, commit: string): Promise<Buffer> {
-    const path = await this.open(source);
+  async snapshot(source: LocalSource, commit: string): Promise<Buffer> {
+    const path = await this.verify(source);
     assertCommit(commit);
     const stage = await mkdtemp(join(tmpdir(), "facility-local-snapshot-"));
     try {
@@ -232,7 +218,7 @@ export class LocalRepositoryHost {
    * existing ref stay untouched. Filters, hooks and signing never run.
    */
   async createBranch(
-    source: LocalSourceRef,
+    source: LocalSource,
     base: string,
     proposal: {
       branch: string;
@@ -241,7 +227,7 @@ export class LocalRepositoryHost {
       files: Array<{ path: string; content: string }>;
     },
   ): Promise<{ commitSha: string }> {
-    const path = await this.open(source);
+    const path = await this.verify(source);
     assertCommit(base);
     if (!proposal.branch.startsWith("facility/") || !isSafeGitBranch(proposal.branch)) {
       throw new LocalRepositoryError(
@@ -307,8 +293,11 @@ export class LocalRepositoryHost {
    * Content the first import cannot represent faithfully yet. Both probes stay
    * bounded on very large repositories: neither lists the whole tree.
    */
-  async warnings(source: LocalSourceRef, commit: string) {
-    const path = await this.open(source);
+  async warnings(source: LocalSource, commit: string) {
+    return this.contentWarnings(await this.verify(source), commit);
+  }
+
+  private async contentWarnings(path: string, commit: string) {
     assertCommit(commit);
     const warnings: string[] = [];
     if ((await this.tree(path, commit, [".gitmodules"])).length > 0) {

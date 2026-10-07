@@ -351,235 +351,6 @@
         "security": []
       }
     },
-    "/oauth/interaction/{uid}": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "uid",
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          },
-          "400": {
-            "description": "The request is invalid.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Authentication is required or invalid.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The authenticated principal lacks the required permission.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "The resource was not found or is outside the principal scope.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The request conflicts with current resource state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "The request rate limit was exceeded.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "An unexpected server error occurred.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "A required service is unavailable.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "operationId": "getOauthInteractionUid",
-        "summary": "Get  uid ",
-        "tags": [
-          "Authentication"
-        ],
-        "security": []
-      },
-      "post": {
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "confirm": {
-                    "type": "string",
-                    "enum": [
-                      "yes"
-                    ]
-                  }
-                },
-                "required": [
-                  "confirm"
-                ]
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "uid",
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          },
-          "400": {
-            "description": "The request is invalid.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Authentication is required or invalid.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The authenticated principal lacks the required permission.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "The resource was not found or is outside the principal scope.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The request conflicts with current resource state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "The request rate limit was exceeded.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "An unexpected server error occurred.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "A required service is unavailable.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "operationId": "postOauthInteractionUid",
-        "summary": "Create  uid ",
-        "tags": [
-          "Authentication"
-        ],
-        "security": []
-      }
-    },
     "/.well-known/oauth-protected-resource/mcp": {
       "get": {
         "responses": {
@@ -14805,7 +14576,359 @@
         ],
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repository": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "defaultBranch": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "defaultBranch"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "currentBranch": {
+                      "type": "string"
+                    },
+                    "headSha": {
+                      "type": "string"
+                    },
+                    "baseSha": {
+                      "type": "string"
+                    },
+                    "sourceRevision": {
+                      "type": "string"
+                    },
+                    "initialSourceRevision": {
+                      "type": "string"
+                    },
+                    "sourceImportedAt": {
+                      "type": "string"
+                    },
+                    "dirty": {
+                      "type": "boolean"
+                    },
+                    "uncommitted": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "commits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sha": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "authoredAt": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sha",
+                          "author",
+                          "authoredAt",
+                          "subject"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "changedFiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "previousPath": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "approval": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "approved",
+                            "stale",
+                            "changes_requested"
+                          ]
+                        },
+                        "commitSha": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "note": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "reviewer": {
+                          "nullable": true,
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "service",
+                                "system"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "reviewedAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "eventId": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "commitSha",
+                        "note",
+                        "reviewer",
+                        "reviewedAt",
+                        "eventId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "command": {
+                            "type": "string"
+                          },
+                          "commitSha": {
+                            "type": "string"
+                          },
+                          "exitCode": {
+                            "type": "number"
+                          },
+                          "durationMs": {
+                            "type": "number"
+                          },
+                          "stdout": {
+                            "type": "string"
+                          },
+                          "stderr": {
+                            "type": "string"
+                          },
+                          "dirty": {
+                            "type": "boolean"
+                          },
+                          "commitChanged": {
+                            "type": "boolean"
+                          },
+                          "recordedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "command",
+                          "commitSha",
+                          "exitCode",
+                          "durationMs",
+                          "stdout",
+                          "stderr",
+                          "dirty",
+                          "commitChanged",
+                          "recordedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exports": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "branch": {
+                            "type": "string"
+                          },
+                          "baseSha": {
+                            "type": "string"
+                          },
+                          "headSha": {
+                            "type": "string"
+                          },
+                          "commitCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "bundleSha256": {
+                            "type": "string"
+                          },
+                          "createdBy": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "service",
+                                  "system"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "reviewBranch": {
+                            "type": "string"
+                          },
+                          "instructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "patchInstructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "branch",
+                          "baseSha",
+                          "headSha",
+                          "commitCount",
+                          "bundleSha256",
+                          "createdBy",
+                          "createdAt",
+                          "reviewBranch",
+                          "instructions",
+                          "patchInstructions"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exportable": {
+                      "type": "boolean"
+                    },
+                    "blockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "story_branch_not_checked_out",
+                          "uncommitted_changes",
+                          "no_changes",
+                          "approval_required"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "repository",
+                    "branch",
+                    "currentBranch",
+                    "headSha",
+                    "baseSha",
+                    "sourceRevision",
+                    "initialSourceRevision",
+                    "sourceImportedAt",
+                    "dirty",
+                    "uncommitted",
+                    "commits",
+                    "changedFiles",
+                    "approval",
+                    "checks",
+                    "exports",
+                    "exportable",
+                    "blockers"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "400": {
             "description": "The request is invalid.",
@@ -14949,7 +15072,359 @@
         ],
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repository": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "defaultBranch": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "defaultBranch"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "currentBranch": {
+                      "type": "string"
+                    },
+                    "headSha": {
+                      "type": "string"
+                    },
+                    "baseSha": {
+                      "type": "string"
+                    },
+                    "sourceRevision": {
+                      "type": "string"
+                    },
+                    "initialSourceRevision": {
+                      "type": "string"
+                    },
+                    "sourceImportedAt": {
+                      "type": "string"
+                    },
+                    "dirty": {
+                      "type": "boolean"
+                    },
+                    "uncommitted": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "commits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sha": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "authoredAt": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sha",
+                          "author",
+                          "authoredAt",
+                          "subject"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "changedFiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "previousPath": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "approval": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "approved",
+                            "stale",
+                            "changes_requested"
+                          ]
+                        },
+                        "commitSha": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "note": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "reviewer": {
+                          "nullable": true,
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "service",
+                                "system"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "reviewedAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "eventId": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "commitSha",
+                        "note",
+                        "reviewer",
+                        "reviewedAt",
+                        "eventId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "command": {
+                            "type": "string"
+                          },
+                          "commitSha": {
+                            "type": "string"
+                          },
+                          "exitCode": {
+                            "type": "number"
+                          },
+                          "durationMs": {
+                            "type": "number"
+                          },
+                          "stdout": {
+                            "type": "string"
+                          },
+                          "stderr": {
+                            "type": "string"
+                          },
+                          "dirty": {
+                            "type": "boolean"
+                          },
+                          "commitChanged": {
+                            "type": "boolean"
+                          },
+                          "recordedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "command",
+                          "commitSha",
+                          "exitCode",
+                          "durationMs",
+                          "stdout",
+                          "stderr",
+                          "dirty",
+                          "commitChanged",
+                          "recordedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exports": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "branch": {
+                            "type": "string"
+                          },
+                          "baseSha": {
+                            "type": "string"
+                          },
+                          "headSha": {
+                            "type": "string"
+                          },
+                          "commitCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "bundleSha256": {
+                            "type": "string"
+                          },
+                          "createdBy": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "service",
+                                  "system"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "reviewBranch": {
+                            "type": "string"
+                          },
+                          "instructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "patchInstructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "branch",
+                          "baseSha",
+                          "headSha",
+                          "commitCount",
+                          "bundleSha256",
+                          "createdBy",
+                          "createdAt",
+                          "reviewBranch",
+                          "instructions",
+                          "patchInstructions"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exportable": {
+                      "type": "boolean"
+                    },
+                    "blockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "story_branch_not_checked_out",
+                          "uncommitted_changes",
+                          "no_changes",
+                          "approval_required"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "repository",
+                    "branch",
+                    "currentBranch",
+                    "headSha",
+                    "baseSha",
+                    "sourceRevision",
+                    "initialSourceRevision",
+                    "sourceImportedAt",
+                    "dirty",
+                    "uncommitted",
+                    "commits",
+                    "changedFiles",
+                    "approval",
+                    "checks",
+                    "exports",
+                    "exportable",
+                    "blockers"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "400": {
             "description": "The request is invalid.",
@@ -15094,7 +15569,359 @@
         ],
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repository": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "defaultBranch": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "defaultBranch"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "currentBranch": {
+                      "type": "string"
+                    },
+                    "headSha": {
+                      "type": "string"
+                    },
+                    "baseSha": {
+                      "type": "string"
+                    },
+                    "sourceRevision": {
+                      "type": "string"
+                    },
+                    "initialSourceRevision": {
+                      "type": "string"
+                    },
+                    "sourceImportedAt": {
+                      "type": "string"
+                    },
+                    "dirty": {
+                      "type": "boolean"
+                    },
+                    "uncommitted": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "commits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sha": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "authoredAt": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sha",
+                          "author",
+                          "authoredAt",
+                          "subject"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "changedFiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "previousPath": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "approval": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "approved",
+                            "stale",
+                            "changes_requested"
+                          ]
+                        },
+                        "commitSha": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "note": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "reviewer": {
+                          "nullable": true,
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "service",
+                                "system"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "reviewedAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "eventId": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "commitSha",
+                        "note",
+                        "reviewer",
+                        "reviewedAt",
+                        "eventId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "command": {
+                            "type": "string"
+                          },
+                          "commitSha": {
+                            "type": "string"
+                          },
+                          "exitCode": {
+                            "type": "number"
+                          },
+                          "durationMs": {
+                            "type": "number"
+                          },
+                          "stdout": {
+                            "type": "string"
+                          },
+                          "stderr": {
+                            "type": "string"
+                          },
+                          "dirty": {
+                            "type": "boolean"
+                          },
+                          "commitChanged": {
+                            "type": "boolean"
+                          },
+                          "recordedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "command",
+                          "commitSha",
+                          "exitCode",
+                          "durationMs",
+                          "stdout",
+                          "stderr",
+                          "dirty",
+                          "commitChanged",
+                          "recordedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exports": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "branch": {
+                            "type": "string"
+                          },
+                          "baseSha": {
+                            "type": "string"
+                          },
+                          "headSha": {
+                            "type": "string"
+                          },
+                          "commitCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "bundleSha256": {
+                            "type": "string"
+                          },
+                          "createdBy": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "service",
+                                  "system"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "reviewBranch": {
+                            "type": "string"
+                          },
+                          "instructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "patchInstructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "branch",
+                          "baseSha",
+                          "headSha",
+                          "commitCount",
+                          "bundleSha256",
+                          "createdBy",
+                          "createdAt",
+                          "reviewBranch",
+                          "instructions",
+                          "patchInstructions"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exportable": {
+                      "type": "boolean"
+                    },
+                    "blockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "story_branch_not_checked_out",
+                          "uncommitted_changes",
+                          "no_changes",
+                          "approval_required"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "repository",
+                    "branch",
+                    "currentBranch",
+                    "headSha",
+                    "baseSha",
+                    "sourceRevision",
+                    "initialSourceRevision",
+                    "sourceImportedAt",
+                    "dirty",
+                    "uncommitted",
+                    "commits",
+                    "changedFiles",
+                    "approval",
+                    "checks",
+                    "exports",
+                    "exportable",
+                    "blockers"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "400": {
             "description": "The request is invalid.",
@@ -15215,7 +16042,359 @@
         ],
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repository": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "defaultBranch": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "defaultBranch"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "currentBranch": {
+                      "type": "string"
+                    },
+                    "headSha": {
+                      "type": "string"
+                    },
+                    "baseSha": {
+                      "type": "string"
+                    },
+                    "sourceRevision": {
+                      "type": "string"
+                    },
+                    "initialSourceRevision": {
+                      "type": "string"
+                    },
+                    "sourceImportedAt": {
+                      "type": "string"
+                    },
+                    "dirty": {
+                      "type": "boolean"
+                    },
+                    "uncommitted": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "commits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sha": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "authoredAt": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sha",
+                          "author",
+                          "authoredAt",
+                          "subject"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "changedFiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "previousPath": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "approval": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "approved",
+                            "stale",
+                            "changes_requested"
+                          ]
+                        },
+                        "commitSha": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "note": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "reviewer": {
+                          "nullable": true,
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "service",
+                                "system"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "reviewedAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "eventId": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "commitSha",
+                        "note",
+                        "reviewer",
+                        "reviewedAt",
+                        "eventId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "command": {
+                            "type": "string"
+                          },
+                          "commitSha": {
+                            "type": "string"
+                          },
+                          "exitCode": {
+                            "type": "number"
+                          },
+                          "durationMs": {
+                            "type": "number"
+                          },
+                          "stdout": {
+                            "type": "string"
+                          },
+                          "stderr": {
+                            "type": "string"
+                          },
+                          "dirty": {
+                            "type": "boolean"
+                          },
+                          "commitChanged": {
+                            "type": "boolean"
+                          },
+                          "recordedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "command",
+                          "commitSha",
+                          "exitCode",
+                          "durationMs",
+                          "stdout",
+                          "stderr",
+                          "dirty",
+                          "commitChanged",
+                          "recordedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exports": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "branch": {
+                            "type": "string"
+                          },
+                          "baseSha": {
+                            "type": "string"
+                          },
+                          "headSha": {
+                            "type": "string"
+                          },
+                          "commitCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "bundleSha256": {
+                            "type": "string"
+                          },
+                          "createdBy": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "service",
+                                  "system"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "reviewBranch": {
+                            "type": "string"
+                          },
+                          "instructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "patchInstructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "branch",
+                          "baseSha",
+                          "headSha",
+                          "commitCount",
+                          "bundleSha256",
+                          "createdBy",
+                          "createdAt",
+                          "reviewBranch",
+                          "instructions",
+                          "patchInstructions"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exportable": {
+                      "type": "boolean"
+                    },
+                    "blockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "story_branch_not_checked_out",
+                          "uncommitted_changes",
+                          "no_changes",
+                          "approval_required"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "repository",
+                    "branch",
+                    "currentBranch",
+                    "headSha",
+                    "baseSha",
+                    "sourceRevision",
+                    "initialSourceRevision",
+                    "sourceImportedAt",
+                    "dirty",
+                    "uncommitted",
+                    "commits",
+                    "changedFiles",
+                    "approval",
+                    "checks",
+                    "exports",
+                    "exportable",
+                    "blockers"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "400": {
             "description": "The request is invalid.",
@@ -15354,7 +16533,384 @@
         ],
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repository": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "defaultBranch": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "defaultBranch"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "currentBranch": {
+                      "type": "string"
+                    },
+                    "headSha": {
+                      "type": "string"
+                    },
+                    "baseSha": {
+                      "type": "string"
+                    },
+                    "sourceRevision": {
+                      "type": "string"
+                    },
+                    "initialSourceRevision": {
+                      "type": "string"
+                    },
+                    "sourceImportedAt": {
+                      "type": "string"
+                    },
+                    "dirty": {
+                      "type": "boolean"
+                    },
+                    "uncommitted": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "commits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sha": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "authoredAt": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sha",
+                          "author",
+                          "authoredAt",
+                          "subject"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "changedFiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "previousPath": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "approval": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "approved",
+                            "stale",
+                            "changes_requested"
+                          ]
+                        },
+                        "commitSha": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "note": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "reviewer": {
+                          "nullable": true,
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "service",
+                                "system"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "reviewedAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "eventId": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "commitSha",
+                        "note",
+                        "reviewer",
+                        "reviewedAt",
+                        "eventId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "command": {
+                            "type": "string"
+                          },
+                          "commitSha": {
+                            "type": "string"
+                          },
+                          "exitCode": {
+                            "type": "number"
+                          },
+                          "durationMs": {
+                            "type": "number"
+                          },
+                          "stdout": {
+                            "type": "string"
+                          },
+                          "stderr": {
+                            "type": "string"
+                          },
+                          "dirty": {
+                            "type": "boolean"
+                          },
+                          "commitChanged": {
+                            "type": "boolean"
+                          },
+                          "recordedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "command",
+                          "commitSha",
+                          "exitCode",
+                          "durationMs",
+                          "stdout",
+                          "stderr",
+                          "dirty",
+                          "commitChanged",
+                          "recordedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exports": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "branch": {
+                            "type": "string"
+                          },
+                          "baseSha": {
+                            "type": "string"
+                          },
+                          "headSha": {
+                            "type": "string"
+                          },
+                          "commitCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "bundleSha256": {
+                            "type": "string"
+                          },
+                          "createdBy": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "service",
+                                  "system"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "reviewBranch": {
+                            "type": "string"
+                          },
+                          "instructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "patchInstructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "branch",
+                          "baseSha",
+                          "headSha",
+                          "commitCount",
+                          "bundleSha256",
+                          "createdBy",
+                          "createdAt",
+                          "reviewBranch",
+                          "instructions",
+                          "patchInstructions"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exportable": {
+                      "type": "boolean"
+                    },
+                    "blockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "story_branch_not_checked_out",
+                          "uncommitted_changes",
+                          "no_changes",
+                          "approval_required"
+                        ]
+                      }
+                    },
+                    "refresh": {
+                      "type": "object",
+                      "properties": {
+                        "previous": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        },
+                        "defaultBranchUpdated": {
+                          "type": "boolean"
+                        },
+                        "diverged": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "previous",
+                        "revision",
+                        "defaultBranchUpdated",
+                        "diverged"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "repository",
+                    "branch",
+                    "currentBranch",
+                    "headSha",
+                    "baseSha",
+                    "sourceRevision",
+                    "initialSourceRevision",
+                    "sourceImportedAt",
+                    "dirty",
+                    "uncommitted",
+                    "commits",
+                    "changedFiles",
+                    "approval",
+                    "checks",
+                    "exports",
+                    "exportable",
+                    "blockers",
+                    "refresh"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "400": {
             "description": "The request is invalid.",
@@ -15475,7 +17031,439 @@
         ],
         "responses": {
           "200": {
-            "description": "Default Response"
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repository": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "defaultBranch": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "defaultBranch"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "currentBranch": {
+                      "type": "string"
+                    },
+                    "headSha": {
+                      "type": "string"
+                    },
+                    "baseSha": {
+                      "type": "string"
+                    },
+                    "sourceRevision": {
+                      "type": "string"
+                    },
+                    "initialSourceRevision": {
+                      "type": "string"
+                    },
+                    "sourceImportedAt": {
+                      "type": "string"
+                    },
+                    "dirty": {
+                      "type": "boolean"
+                    },
+                    "uncommitted": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "commits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sha": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "authoredAt": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sha",
+                          "author",
+                          "authoredAt",
+                          "subject"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "changedFiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "previousPath": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "path"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "approval": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "approved",
+                            "stale",
+                            "changes_requested"
+                          ]
+                        },
+                        "commitSha": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "note": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "reviewer": {
+                          "nullable": true,
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "service",
+                                "system"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "reviewedAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "eventId": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "commitSha",
+                        "note",
+                        "reviewer",
+                        "reviewedAt",
+                        "eventId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "command": {
+                            "type": "string"
+                          },
+                          "commitSha": {
+                            "type": "string"
+                          },
+                          "exitCode": {
+                            "type": "number"
+                          },
+                          "durationMs": {
+                            "type": "number"
+                          },
+                          "stdout": {
+                            "type": "string"
+                          },
+                          "stderr": {
+                            "type": "string"
+                          },
+                          "dirty": {
+                            "type": "boolean"
+                          },
+                          "commitChanged": {
+                            "type": "boolean"
+                          },
+                          "recordedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "command",
+                          "commitSha",
+                          "exitCode",
+                          "durationMs",
+                          "stdout",
+                          "stderr",
+                          "dirty",
+                          "commitChanged",
+                          "recordedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exports": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "branch": {
+                            "type": "string"
+                          },
+                          "baseSha": {
+                            "type": "string"
+                          },
+                          "headSha": {
+                            "type": "string"
+                          },
+                          "commitCount": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "bundleSha256": {
+                            "type": "string"
+                          },
+                          "createdBy": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "service",
+                                  "system"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "id"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "reviewBranch": {
+                            "type": "string"
+                          },
+                          "instructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "patchInstructions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "branch",
+                          "baseSha",
+                          "headSha",
+                          "commitCount",
+                          "bundleSha256",
+                          "createdBy",
+                          "createdAt",
+                          "reviewBranch",
+                          "instructions",
+                          "patchInstructions"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "exportable": {
+                      "type": "boolean"
+                    },
+                    "blockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "story_branch_not_checked_out",
+                          "uncommitted_changes",
+                          "no_changes",
+                          "approval_required"
+                        ]
+                      }
+                    },
+                    "export": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "branch": {
+                          "type": "string"
+                        },
+                        "baseSha": {
+                          "type": "string"
+                        },
+                        "headSha": {
+                          "type": "string"
+                        },
+                        "commitCount": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "bundleSha256": {
+                          "type": "string"
+                        },
+                        "createdBy": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "service",
+                                "system"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "reviewBranch": {
+                          "type": "string"
+                        },
+                        "instructions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "patchInstructions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "branch",
+                        "baseSha",
+                        "headSha",
+                        "commitCount",
+                        "bundleSha256",
+                        "createdBy",
+                        "createdAt",
+                        "reviewBranch",
+                        "instructions",
+                        "patchInstructions"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "repository",
+                    "branch",
+                    "currentBranch",
+                    "headSha",
+                    "baseSha",
+                    "sourceRevision",
+                    "initialSourceRevision",
+                    "sourceImportedAt",
+                    "dirty",
+                    "uncommitted",
+                    "commits",
+                    "changedFiles",
+                    "approval",
+                    "checks",
+                    "exports",
+                    "exportable",
+                    "blockers",
+                    "export"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
           },
           "400": {
             "description": "The request is invalid.",
