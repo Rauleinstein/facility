@@ -56,6 +56,7 @@ export const FACILITY_V1_ROUTES = [
   "POST /v1/projects/:projectId/kickstart",
   "POST /v1/projects/:projectId/repos",
   "POST /v1/projects/:projectId/repos/:repoId/local-kickstart",
+  "POST /v1/projects/:projectId/repos/:repoId/local-kickstart/branch",
   "POST /v1/projects/:projectId/repos/local",
   "POST /v1/projects/:projectId/workspace-stories",
   "POST /v1/projects/:projectId/workspace-stories/:storyId/archive",

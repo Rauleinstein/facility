@@ -59,8 +59,15 @@ another project receives 404 rather than a distinguishable authorization error.
   `local_repositories_disabled`, `local_repository_outside_roots`, `local_repository_path_invalid`,
   `local_repository_empty`, `local_repository_exists`, `local_repository_claimed` (another
   organization registered the path), and `repository_sources_mixed`.
-- `POST /v1/projects/:projectId/repos/:repoId/local-kickstart` returns starter configuration as a
-  `git apply` patch (`projects:kickstart`). It never writes to the repository.
+- `POST /v1/projects/:projectId/repos/:repoId/local-kickstart` previews starter configuration:
+  the `files` to add, the target `branch`, and a `git apply` `patch` with its `instructions`
+  (`projects:kickstart`). It writes nothing.
+- `POST /v1/projects/:projectId/repos/:repoId/local-kickstart/branch` commits the same files to a
+  new `facility/kickstart` branch on top of the default branch and returns `commitSha`, `baseSha`,
+  and review-and-merge `instructions` (`projects:kickstart`). It never touches the working tree,
+  the index, or an existing branch. Errors include `local_repository_branch_exists` (409, never
+  overwritten), `local_kickstart_complete` (409, nothing to add), and `local_repository_git_failed`
+  (for example a read-only repository).
 - `/v1/projects/:projectId/workspace-stories/:storyId/local-review` returns commits, changed files,
   uncommitted work, checks for the head commit, approval, and exports (`stories:read`; it wakes a
   suspended workspace only for callers with `workspaces:execute`). Its sub-routes are `approve`

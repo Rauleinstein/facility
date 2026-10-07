@@ -36,6 +36,7 @@ export type {
   KickstartResult,
   LocalExport,
   LocalKickstart,
+  LocalKickstartBranch,
   LocalRepositoryRegistration,
   LocalRepositoryStatus,
   LocalReviewState,
@@ -135,6 +136,7 @@ function typed<T>(result: Promise<ApiResult<unknown>>): Promise<ApiResult<T>> {
 }
 
 export const api = {
+  authMethods: () => apiFetch("GET", "/auth/methods"),
   me: () => apiFetch("GET", "/v1/me"),
   projects: () => apiFetch("GET", "/v1/projects"),
   createProject: (body: CreateProjectRequest) => apiFetch("POST", "/v1/projects", { body }),

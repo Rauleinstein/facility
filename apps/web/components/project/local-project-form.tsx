@@ -1,11 +1,12 @@
 "use client";
 
-import { Button, Eyebrow, Field, TextInput } from "@facility/ui";
+import { Button, Field, TextInput } from "@facility/ui";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type {
   LocalKickstart,
+  LocalKickstartBranch,
   LocalRepositoryRegistration,
   LocalRepositoryStatus,
   Project,
@@ -15,10 +16,11 @@ import { clientApi } from "@/lib/client-api";
 /**
  * A project backed by a Git repository on the machine running Facility. No
  * GitHub App, installation, or hosted remote is involved: Facility imports the
- * committed history into its own workspaces, and starter configuration comes
- * back as a patch the user reviews and commits themselves.
+ * committed history into its own workspaces. Starter configuration is
+ * previewed first; on request Facility commits it to a new branch the user
+ * merges, with a patch as fallback.
  */
-export default function LocalProjectPage() {
+export function LocalProjectForm() {
   const router = useRouter();
   const [status, setStatus] = useState<LocalRepositoryStatus | null>(null);
   const [statusError, setStatusError] = useState("");
@@ -29,6 +31,7 @@ export default function LocalProjectPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [repository, setRepository] = useState<LocalRepositoryRegistration | null>(null);
   const [kickstart, setKickstart] = useState<LocalKickstart | null>(null);
+  const [created, setCreated] = useState<LocalKickstartBranch | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -92,22 +95,27 @@ export default function LocalProjectPage() {
     router.refresh();
   }
 
+  async function createBranch() {
+    if (!project || !repository) return;
+    setBusy(true);
+    setError("");
+    const result = await clientApi<LocalKickstartBranch>(
+      "POST",
+      `/v1/projects/${encodeURIComponent(project.id)}/repos/${encodeURIComponent(repository.id)}/local-kickstart/branch`,
+      { answers: startCommand.trim() ? { startCmd: startCommand.trim() } : {} },
+    );
+    if (result.ok) setCreated(result.data);
+    else setError(`Couldn't create the branch — ${result.message}. You can use the patch instead.`);
+    setBusy(false);
+  }
+
   return (
-    <div className="flex max-w-4xl flex-col gap-8">
-      <div className="flex flex-col gap-2">
-        <Eyebrow>local repository</Eyebrow>
-        <h1 className="text-[clamp(22px,3vw,32px)] font-semibold tracking-tight">
-          Start a project from a repository on this machine
-        </h1>
-        <p className="text-[12.5px] text-(--mut)">
-          Agents work on Facility-managed copies in local Docker workspaces. You review, request
-          revisions, and import approved commits back into your repository. Model calls still go to
-          your configured AI provider.{" "}
-          <Link className="text-(--info) underline" href="/projects/new">
-            Use GitHub instead
-          </Link>
-        </p>
-      </div>
+    <div className="flex max-w-4xl flex-col gap-5">
+      <p className="text-[12.5px] leading-relaxed text-(--mut)">
+        Agents work on Facility-managed copies in local Docker workspaces. You review, request
+        revisions, and import approved commits back into your repository. No GitHub App or hosted
+        remote is needed; model calls still go to your configured AI provider.
+      </p>
 
       {statusError ? (
         <p className="text-sm text-(--bad)">
@@ -167,8 +175,9 @@ export default function LocalProjectPage() {
           </Field>
           <p className="border border-(--line) p-4 text-[12.5px] leading-relaxed text-(--mut)">
             Facility imports <strong>committed history</strong> from the default branch only.
-            Uncommitted and untracked files in your checkout are never copied, and Facility never
-            writes to your repository.
+            Uncommitted and untracked files in your checkout are never copied. Facility never
+            changes your checkout or an existing branch; it only creates new <code>facility/*</code>{" "}
+            branches when you ask.
           </p>
           <div>
             <Button type="submit" disabled={busy || !slug || !path.trim()}>
@@ -198,20 +207,55 @@ export default function LocalProjectPage() {
               </p>
             ) : (
               <>
-                <p className="text-sm text-(--mut)">
-                  Review this starter configuration, save it as{" "}
-                  <code>facility-kickstart.patch</code> in your repository, then apply and commit
-                  it:
-                </p>
-                <pre className="overflow-auto bg-(--bg-subtle) p-3 text-[11.5px]">
-                  {kickstart.instructions.join("\n")}
-                </pre>
-                <textarea
-                  readOnly
-                  aria-label="Starter configuration patch"
-                  className="h-72 w-full border border-(--line) bg-(--bg-subtle) p-3 font-mono text-[11.5px]"
-                  value={kickstart.patch}
-                />
+                {created ? (
+                  <>
+                    <p className="text-sm text-(--mut)">
+                      Created branch <code>{created.branch}</code> at commit{" "}
+                      <span className="font-mono">{created.commitSha.slice(0, 12)}</span> in your
+                      repository. Your checkout is unchanged. Review and merge it from inside the
+                      repository:
+                    </p>
+                    <pre className="overflow-auto bg-(--bg-subtle) p-3 text-[11.5px]">
+                      {created.instructions.join("\n")}
+                    </pre>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-(--mut)">
+                      Facility can commit the starter configuration to a new branch,{" "}
+                      <code>{kickstart.branch}</code>, on top of {repository.defaultBranch}. It
+                      won't touch your checkout or any existing branch, and you merge it yourself:
+                    </p>
+                    <ul className="font-mono text-[11.5px] text-(--mut)">
+                      {kickstart.files.map((file) => (
+                        <li key={file.path}>{file.path}</li>
+                      ))}
+                    </ul>
+                    <div>
+                      <Button type="button" disabled={busy} onClick={() => void createBranch()}>
+                        {busy ? "Creating…" : `Create branch ${kickstart.branch}`}
+                      </Button>
+                    </div>
+                  </>
+                )}
+                {created ? null : (
+                  <details className="text-sm text-(--mut)">
+                    <summary className="cursor-pointer">Use a patch instead</summary>
+                    <p className="mt-3">
+                      Save this as <code>facility-kickstart.patch</code> in your repository, then
+                      apply and commit it:
+                    </p>
+                    <pre className="mt-3 overflow-auto bg-(--bg-subtle) p-3 text-[11.5px]">
+                      {kickstart.instructions.join("\n")}
+                    </pre>
+                    <textarea
+                      readOnly
+                      aria-label="Starter configuration patch"
+                      className="mt-3 h-72 w-full border border-(--line) bg-(--bg-subtle) p-3 font-mono text-[11.5px]"
+                      value={kickstart.patch}
+                    />
+                  </details>
+                )}
               </>
             )
           ) : null}

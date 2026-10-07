@@ -14,6 +14,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { LocalProjectForm } from "@/components/project/local-project-form";
 import type { Project, ProjectRepo } from "@/lib/api";
 
 /**
@@ -115,7 +116,7 @@ export default function KickstartPage() {
   const [repos, setRepos] = useState<PickableRepo[] | null>(null);
   const [reposLoading, setReposLoading] = useState(false);
   const [query, setQuery] = useState("");
-  const [tab, setTab] = useState<"pick" | "new" | "manual">("pick");
+  const [tab, setTab] = useState<"pick" | "new" | "manual" | "local">("pick");
 
   // Selection + project details
   const [source, setSource] = useState<Source | null>(null);
@@ -324,6 +325,23 @@ export default function KickstartPage() {
     router.refresh();
   }
 
+  const sourceTabs = (
+    <div className="flex flex-wrap items-center gap-2">
+      <button type="button" onClick={() => setTab("pick")}>
+        <PillTag active={tab === "pick"}>from the github app</PillTag>
+      </button>
+      <button type="button" onClick={() => setTab("new")}>
+        <PillTag active={tab === "new"}>new repository</PillTag>
+      </button>
+      <button type="button" onClick={() => setTab("manual")}>
+        <PillTag active={tab === "manual"}>type owner/name</PillTag>
+      </button>
+      <button type="button" onClick={() => setTab("local")}>
+        <PillTag active={tab === "local"}>on this machine</PillTag>
+      </button>
+    </div>
+  );
+
   return (
     <div className="flex max-w-6xl flex-col gap-8">
       <div className="flex flex-col gap-2">
@@ -332,13 +350,9 @@ export default function KickstartPage() {
           Kickstart a project
         </h1>
         <p className="text-[12.5px] text-(--dim)">
-          pick a repository → preview the assets → open the PR
-        </p>
-        <p className="text-[12.5px] text-(--mut)">
-          No GitHub?{" "}
-          <Link className="text-(--info) underline" href="/projects/new/local">
-            Use a Git repository on this machine →
-          </Link>
+          {tab === "local"
+            ? "register a repository → review the starter patch → commit it"
+            : "pick a repository → preview the assets → open the PR"}
         </p>
       </div>
 
@@ -348,20 +362,17 @@ export default function KickstartPage() {
         </div>
       ) : null}
 
-      {phase === "pick" || phase === "previewing" ? (
+      {tab === "local" ? (
+        <div className="flex flex-col gap-5">
+          {sourceTabs}
+          <LocalProjectForm />
+        </div>
+      ) : null}
+
+      {tab !== "local" && (phase === "pick" || phase === "previewing") ? (
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
           <div className="flex min-w-0 flex-col gap-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => setTab("pick")}>
-                <PillTag active={tab === "pick"}>from the github app</PillTag>
-              </button>
-              <button type="button" onClick={() => setTab("new")}>
-                <PillTag active={tab === "new"}>new repository</PillTag>
-              </button>
-              <button type="button" onClick={() => setTab("manual")}>
-                <PillTag active={tab === "manual"}>type owner/name</PillTag>
-              </button>
-            </div>
+            {sourceTabs}
 
             {tab === "pick" ? (
               <div className="flex flex-col gap-3">
@@ -371,7 +382,7 @@ export default function KickstartPage() {
                   <div className="border border-(--line) bg-(--bg-subtle) p-5 text-sm leading-relaxed text-(--mut)">
                     {installationsError
                       ? `Repo discovery isn't available (${installationsError}). Use "type owner/name".`
-                      : 'No GitHub App installation is visible yet. Install the Facility GitHub App on your org, then reload — or use "type owner/name".'}
+                      : 'No GitHub App installation is visible yet. Install the Facility GitHub App on your org, then reload — or use "type owner/name", or "on this machine" for a Git repository without GitHub.'}
                   </div>
                 ) : (
                   <>

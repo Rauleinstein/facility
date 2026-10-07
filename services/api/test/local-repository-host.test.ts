@@ -4,6 +4,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rename,
   rm,
@@ -252,6 +253,144 @@ describe("local repository host", () => {
     );
   });
 
+  describe("createBranch", () => {
+    const author = { name: "Facility Agent", email: "facility-agent@localhost" };
+    const proposal = (branch = "facility/kickstart") => ({
+      branch,
+      message: "feat: configure Facility local workflow",
+      author,
+      files: [
+        { path: ".agents/reviewer.md", content: "# reviewer\n" },
+        { path: "nested/dir/new.txt", content: "new\n" },
+      ],
+    });
+
+    it("commits new files to a new branch without touching the checkout or other refs", async () => {
+      const repository = await createRepository(join(root, "branch"));
+      const head = (await git(repository, ["rev-parse", "HEAD"])).trim();
+      await writeFile(join(repository, "README.md"), "# app (uncommitted)\n");
+      await writeFile(join(repository, "untracked.txt"), "local only\n");
+      await git(repository, ["add", "README.md"]);
+      const refsBefore = await git(repository, ["for-each-ref"]);
+      const statusBefore = await git(repository, ["status", "--porcelain"]);
+      const stateBefore = await gitDirState(repository);
+
+      const { commitSha } = await host.createBranch(repository, head, proposal());
+
+      expect((await git(repository, ["rev-parse", "facility/kickstart"])).trim()).toBe(commitSha);
+      expect((await git(repository, ["rev-parse", `${commitSha}^`])).trim()).toBe(head);
+      expect(await git(repository, ["diff", "--name-only", head, commitSha])).toBe(
+        ".agents/reviewer.md\nnested/dir/new.txt\n",
+      );
+      expect(await git(repository, ["show", `${commitSha}:.agents/reviewer.md`])).toBe(
+        "# reviewer\n",
+      );
+      expect(await git(repository, ["log", "-1", "--format=%an <%ae>|%s", commitSha])).toBe(
+        "Facility Agent <facility-agent@localhost>|feat: configure Facility local workflow\n",
+      );
+      // Compared on disk first: running git status would refresh the index itself.
+      expect(await gitDirState(repository)).toEqual(stateBefore);
+      expect(await git(repository, ["status", "--porcelain"])).toBe(statusBefore);
+      expect(
+        (await git(repository, ["for-each-ref"]))
+          .split("\n")
+          .filter((line) => !line.endsWith("refs/heads/facility/kickstart")),
+      ).toEqual(refsBefore.split("\n"));
+      expect(existsSync(join(repository, ".agents"))).toBe(false);
+    });
+
+    it("never overwrites an existing branch, including on a repeat request", async () => {
+      const repository = join(root, "branch");
+      const head = (await git(repository, ["rev-parse", "main"])).trim();
+      const tip = (await git(repository, ["rev-parse", "facility/kickstart"])).trim();
+      await expectCode(
+        host.createBranch(repository, head, proposal()),
+        "local_repository_branch_exists",
+        409,
+      );
+      await git(repository, ["branch", "facility/mine", head]);
+      await expectCode(
+        host.createBranch(repository, head, proposal("facility/mine")),
+        "local_repository_branch_exists",
+        409,
+      );
+      expect((await git(repository, ["rev-parse", "facility/kickstart"])).trim()).toBe(tip);
+      expect((await git(repository, ["rev-parse", "facility/mine"])).trim()).toBe(head);
+    });
+
+    it("rejects branches outside facility/, malformed input, and paths outside the roots", async () => {
+      const repository = await createRepository(join(root, "branch-invalid"));
+      const head = (await git(repository, ["rev-parse", "HEAD"])).trim();
+      const refsBefore = await git(repository, ["for-each-ref"]);
+      for (const branch of ["main", "feature/x", "facility/../main", "facility/a..b"]) {
+        await expectCode(
+          host.createBranch(repository, head, proposal(branch)),
+          "local_repository_branch_invalid",
+          400,
+        );
+      }
+      await expectCode(
+        host.createBranch(repository, "not-a-sha", proposal()),
+        "local_repository_revision_invalid",
+        400,
+      );
+      await expectCode(
+        host.createBranch(repository, head, { ...proposal(), files: [] }),
+        "local_repository_commit_empty",
+        400,
+      );
+      await expectCode(
+        host.createBranch(join(outside, "secret"), head, proposal()),
+        "local_repository_outside_roots",
+        403,
+      );
+      expect(await git(repository, ["for-each-ref"])).toBe(refsBefore);
+    });
+
+    it("runs no hooks, clean filters, or signing programs from repository configuration", async () => {
+      const repository = await createRepository(join(root, "branch-hostile"));
+      const head = (await git(repository, ["rev-parse", "HEAD"])).trim();
+      const marker = join(base, "branch-executed");
+      const script = join(base, "branch-payload.sh");
+      await writeFile(script, `#!/bin/sh\ntouch ${marker}\ncat\n`);
+      await chmod(script, 0o755);
+      await git(repository, ["config", "filter.evil.clean", script]);
+      await git(repository, ["config", "commit.gpgSign", "true"]);
+      await git(repository, ["config", "gpg.program", script]);
+      await mkdir(join(repository, ".git", "info"), { recursive: true });
+      await mkdir(join(repository, ".git", "hooks"), { recursive: true });
+      await writeFile(join(repository, ".git", "info", "attributes"), "* filter=evil\n");
+      for (const hook of ["reference-transaction", "post-commit", "post-rewrite"]) {
+        await writeFile(join(repository, ".git", "hooks", hook), `#!/bin/sh\ntouch ${marker}\n`);
+        await chmod(join(repository, ".git", "hooks", hook), 0o755);
+      }
+      const { commitSha } = await host.createBranch(repository, head, proposal());
+      expect(await git(repository, ["show", `${commitSha}:nested/dir/new.txt`])).toBe("new\n");
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    it.skipIf(process.getuid?.() === 0)(
+      "fails without creating a ref when the repository is not writable",
+      async () => {
+        const repository = await createRepository(join(root, "branch-readonly"));
+        const head = (await git(repository, ["rev-parse", "HEAD"])).trim();
+        const objects = join(repository, ".git", "objects");
+        await git(repository, ["config", "core.sharedRepository", "false"]);
+        await chmodTree(objects, 0o555);
+        try {
+          await expectCode(
+            host.createBranch(repository, head, proposal()),
+            "local_repository_git_failed",
+            409,
+          );
+        } finally {
+          await chmodTree(objects, 0o755);
+        }
+        expect(await git(repository, ["branch", "--list", "facility/*"])).toBe("");
+      },
+    );
+  });
+
   it("refuses a registered path that is later replaced by a symlink elsewhere", async () => {
     const repository = await createRepository(join(root, "replaced"));
     const inspection = await host.inspect(repository);
@@ -312,6 +451,13 @@ async function gitDirState(repository: string) {
     indexModified: (await stat(index)).mtimeMs,
     head: await readFile(join(repository, ".git", "HEAD"), "utf8"),
   };
+}
+
+async function chmodTree(path: string, mode: number) {
+  await chmod(path, mode);
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    if (entry.isDirectory()) await chmodTree(join(path, entry.name), mode);
+  }
 }
 
 async function expectCode(promise: Promise<unknown>, code: string, status: number) {

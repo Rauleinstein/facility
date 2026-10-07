@@ -11,9 +11,10 @@ Status: implemented for the first release. User guide:
   only to GitHub rows. A project never mixes sources, and one organization owns a host path.
 - **Host access.** `services/api/src/repositories/local.ts` validates approved roots
   (`FACILITY_LOCAL_REPOSITORY_ROOTS`), ownership, symlinks, worktree Git directories, repository
-  roots, and empty repositories, and re-validates the stored path on every use. Git runs read-only
-  with system/global config, hooks, fsmonitor, and replace objects disabled; snapshots are copied
-  through a Facility-owned staging repository.
+  roots, and empty repositories, and re-validates the stored path on every use. Git runs with
+  system/global config, hooks, fsmonitor, and replace objects disabled; snapshots are copied
+  through a Facility-owned staging repository. The only write is `createBranch`: new objects and a
+  new `facility/*` ref, through a private index, never touching the checkout or existing refs.
 - **Configuration and turns.** `services/api/src/repositories/sources.ts` selects GitHub or local
   readers for `.facility.yml`, agents, skills, and repository access. `.facility.yml` accepts
   `local:<alias>` and `environment.checks`. The manifest's commit is imported into the workspace,
@@ -109,7 +110,8 @@ Resolve the commit once and record it with configuration hashes and turn evidenc
 
 Evolve `.facility.yml` to refer to registered repository aliases for local sources;
 keep existing GitHub syntax compatible and keep machine-specific paths out of the manifest.
-Generate starter agents and configuration as a reviewable local patch instead of a kickstart PR.
+Generate starter agents and configuration as a `facility/kickstart` branch the user merges, the
+local counterpart of the kickstart PR, with a `git apply` patch for read-only repositories.
 Local templates must describe local review/export and avoid mandatory `gh` commands.
 
 Deliverable: local agents and environment configuration load without any GitHub API calls.

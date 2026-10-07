@@ -49,7 +49,10 @@ printed by `pnpm dev`.
 
 ## Sign in and connect a repository
 
-For local development, choose **continue locally** on the login page. To exercise real repositories,
+For local development, choose **continue locally** on the login page. The page offers one button per
+sign-in method the API has enabled: **continue locally** when `FACILITY_INSECURE_DEV=1`, and
+**continue with GitHub** (or **SSO** for OIDC) when an identity provider is configured, so you can see
+both side by side. To exercise real repositories,
 configure a GitHub App for repository access and restart the services. Production installations use
 GitHub or OIDC authentication and bind the first owner with `facility instance bootstrap`. Create a
 project in the UI, choose a repository, and open its kickstart PR. After merging that configuration

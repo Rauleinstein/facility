@@ -27,6 +27,26 @@ export async function registerAuthRoutes(
 ) {
   const provider = new ExternalIdentityProvider(config, options.fetch);
 
+  // The login page renders one button per method this instance actually offers.
+  app.get(
+    "/auth/methods",
+    {
+      config: { public: true },
+      schema: {
+        response: {
+          200: z.object({
+            local: z.boolean(),
+            external: z.enum(["github", "oidc"]).nullable(),
+          }),
+        },
+      },
+    },
+    async () => ({
+      local: Boolean(config.facilityInsecureDev),
+      external: provider.configured ? (config.authIdentityProvider ?? "github") : null,
+    }),
+  );
+
   app.get(
     "/auth/login",
     {
