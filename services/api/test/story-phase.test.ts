@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mergePersons, searchMatches } from "../src/stories/backlog.js";
 import {
   derivePhase,
+  localReviewSummary,
   pickPullRequest,
   provisionalTitle,
   resolveDefaultAgent,
@@ -247,6 +248,72 @@ describe("default agent", () => {
     expect(
       resolveDefaultAgent([agent("builder", false, "ui"), agent("alpha", true, "mcp")], "ui"),
     ).toBeNull();
+  });
+});
+
+describe("local review phase", () => {
+  const head = { sha: "b".repeat(40), dirty: false };
+  const imported = ["a".repeat(40)];
+  const check = (exitCode: number, extra: Record<string, unknown> = {}) => ({
+    type: "local_check.completed",
+    data: { name: "unit", commitSha: head.sha, exitCode, ...extra },
+  });
+  const phase = (summary: ReturnType<typeof localReviewSummary>) =>
+    derivePhase({ story: startedStory, openAttention: [], localReview: summary });
+
+  it("has nothing to review until the story branch moves past the imported source", () => {
+    expect(localReviewSummary({ head: null, imported, events: [] })).toBeNull();
+    expect(
+      localReviewSummary({ head: { sha: imported[0] ?? "", dirty: false }, imported, events: [] }),
+    ).toBeNull();
+    // Uncommitted work is unfinished, not reviewable.
+    expect(localReviewSummary({ head: { ...head, dirty: true }, imported, events: [] })).toBeNull();
+    expect(phase(null)).toEqual({ phase: "in_progress", reason: "started" });
+  });
+
+  it("puts committed work in review and ties approval to the exact head", () => {
+    const awaiting = localReviewSummary({ head, imported, events: [] });
+    expect(phase(awaiting)).toEqual({ phase: "review", reason: "awaiting_review" });
+    const approved = localReviewSummary({
+      head,
+      imported,
+      events: [{ type: "local_review.approved", data: { commitSha: head.sha } }],
+    });
+    expect(phase(approved)).toEqual({ phase: "review", reason: "approved" });
+    // An approval of an earlier commit is stale: the new head awaits review.
+    const stale = localReviewSummary({
+      head,
+      imported,
+      events: [{ type: "local_review.approved", data: { commitSha: "c".repeat(40) } }],
+    });
+    expect(phase(stale)).toEqual({ phase: "review", reason: "awaiting_review" });
+  });
+
+  it("needs attention for requested changes and failing checks on the current head", () => {
+    const requested = localReviewSummary({
+      head,
+      imported,
+      events: [{ type: "local_review.changes_requested", data: { commitSha: head.sha } }],
+    });
+    expect(phase(requested)).toEqual({ phase: "attention", reason: "changes_requested" });
+    const failing = localReviewSummary({ head, imported, events: [check(1), check(0)] });
+    expect(phase(failing)).toEqual({ phase: "attention", reason: "checks_failing" });
+    // The newest result per check wins, and dirty or moving runs never count.
+    expect(
+      localReviewSummary({ head, imported, events: [check(0), check(1)] })?.checksFailing,
+    ).toBe(false);
+    expect(
+      localReviewSummary({ head, imported, events: [check(1, { dirty: true })] })?.checksFailing,
+    ).toBe(false);
+    // A running turn is live work even while review is pending.
+    expect(
+      derivePhase({
+        story: startedStory,
+        openAttention: [],
+        activeTurn: { state: "running" },
+        localReview: requested,
+      }),
+    ).toEqual({ phase: "in_progress", reason: "running" });
   });
 });
 

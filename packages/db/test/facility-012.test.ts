@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -159,11 +160,37 @@ describe("Facility 0.12 database", () => {
 
     for (const values of [
       // A local row must use the sentinel owner, a canonical path, and no installation.
-      { source: "local" as const, owner: "acme", name: "a1", sourcePath: "/srv/a1" },
-      { source: "local" as const, owner: "_local", name: "a2", sourcePath: null },
-      { source: "local" as const, owner: "_local", name: "a3", sourcePath: "relative/a3" },
+      {
+        source: "local" as const,
+        owner: "acme",
+        name: "a1",
+        sourcePath: "/srv/a1",
+        sourceRepository: "/srv/a1/.git",
+      },
+      {
+        source: "local" as const,
+        owner: "_local",
+        name: "a2",
+        sourcePath: null,
+        sourceRepository: "/srv/a2/.git",
+      },
+      {
+        source: "local" as const,
+        owner: "_local",
+        name: "a3",
+        sourcePath: "relative/a3",
+        sourceRepository: "/srv/a3/.git",
+      },
+      {
+        source: "local" as const,
+        owner: "_local",
+        name: "a7",
+        sourcePath: "/srv/a7",
+        sourceRepository: null,
+      },
       // A GitHub row can neither carry a host path nor claim the local owner sentinel.
       { source: "github" as const, owner: "acme", name: "a4", sourcePath: "/srv/a4" },
+      { source: "github" as const, owner: "acme", name: "a8", sourceRepository: "/srv/a8/.git" },
       { source: "github" as const, owner: "_local", name: "a5", sourcePath: null },
       { source: "svn" as never, owner: "acme", name: "a6", sourcePath: null },
     ]) {
@@ -180,11 +207,12 @@ describe("Facility 0.12 database", () => {
       owner: "_local",
       name: "app",
       sourcePath: "/srv/app",
+      sourceRepository: `/srv/${suffix}/app/.git`,
     };
     await db.insert(schema.projectRepositories).values({ ...local, id: `repo_l1_${suffix}` });
     for (const duplicate of [
       { name: "APP", sourcePath: "/srv/other" },
-      { name: "other", sourcePath: "/srv/app" },
+      { name: "other", sourcePath: "/srv/app", sourceRepository: `/srv/${suffix}/other/.git` },
     ]) {
       await expect(
         db
@@ -192,12 +220,70 @@ describe("Facility 0.12 database", () => {
           .values({ ...local, ...duplicate, id: `repo_dup_${duplicate.name}_${suffix}` }),
       ).rejects.toMatchObject({ cause: { code: "23505" } });
     }
+    // Another project of the same organization may register the same repository.
+    const sibling = `proj_src2_${suffix}`;
+    await db
+      .insert(schema.projects)
+      .values({ id: sibling, orgId, name: "S2", slug: "project-2", settings: {} });
+    await db.insert(schema.projectRepositories).values({
+      ...local,
+      projectId: sibling,
+      sourcePath: "/srv/app-worktree",
+      id: `repo_l2_${suffix}`,
+    });
+    // Another organization cannot, through any path of that repository.
+    const otherOrg = `org_src_other_${suffix}`;
+    await db
+      .insert(schema.orgs)
+      .values({ id: otherOrg, name: "O", slug: `o-${suffix}`, settings: {} });
+    await db.insert(schema.projects).values({
+      id: `proj_other_${suffix}`,
+      orgId: otherOrg,
+      name: "O",
+      slug: "project",
+      settings: {},
+    });
+    await expect(
+      db.insert(schema.projectRepositories).values({
+        ...local,
+        orgId: otherOrg,
+        projectId: `proj_other_${suffix}`,
+        sourcePath: "/srv/elsewhere",
+        id: `repo_cross_${suffix}`,
+      }),
+    ).rejects.toMatchObject({ cause: { code: "23505" } });
     // A local alias equal to a GitHub repository name is not a GitHub identity.
     await expect(
       db
         .insert(schema.projectRepositories)
         .values({ ...base, id: `repo_gh2_${suffix}`, owner: "acme", name: "app" }),
     ).rejects.toMatchObject({ cause: { code: "23505" } });
+  });
+
+  it("records local access mode explicitly and defaults existing organizations to GitHub", async () => {
+    const suffix = randomUUID().replaceAll("-", "");
+    const [org] = await db
+      .insert(schema.orgs)
+      .values({ id: `org_mode_${suffix}`, name: "M", slug: `m-${suffix}`, settings: {} })
+      .returning();
+    expect(org?.accessMode).toBe("github");
+    await expect(
+      db.insert(schema.orgs).values({
+        id: `org_mode_bad_${suffix}`,
+        name: "M",
+        slug: `m-bad-${suffix}`,
+        accessMode: "open" as never,
+      }),
+    ).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
+  it("seeds the development organization in local access mode", async () => {
+    await seed(databaseUrl, { includeDemoData: true });
+    const [org] = await db
+      .select({ accessMode: schema.orgs.accessMode })
+      .from(schema.orgs)
+      .where(eq(schema.orgs.slug, "facility-local"));
+    expect(org?.accessMode).toBe("local");
   });
 
   it("rejects cross-organization repository, event, artifact, and preview references", async () => {

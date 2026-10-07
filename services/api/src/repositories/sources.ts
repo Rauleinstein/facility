@@ -14,12 +14,19 @@ import type {
 } from "../github/workspace-credentials.js";
 import {
   type LocalSnapshotProvider,
+  type PinnedRevisions,
   ProjectEnvironmentError,
   type ProjectManifest,
   type ProjectManifestSource,
   parseProjectManifest,
 } from "../workspaces/project-environment.js";
-import { LocalRepositoryError, type LocalRepositoryHost } from "./local.js";
+import {
+  DEFAULT_LOCAL_GIT_IDENTITY,
+  LocalRepositoryError,
+  type LocalRepositoryHost,
+} from "./local.js";
+
+export { DEFAULT_LOCAL_GIT_IDENTITY };
 
 export type RepositorySource = "github" | "local";
 export type ProjectRepositoryRow = typeof projectRepositories.$inferSelect;
@@ -27,18 +34,9 @@ export type ProjectRepositoryRow = typeof projectRepositories.$inferSelect;
 /** Local repositories share one owner sentinel that GitHub logins cannot use. */
 export const LOCAL_REPOSITORY_OWNER = "_local";
 
-export const DEFAULT_LOCAL_GIT_IDENTITY: GithubGitIdentity = {
-  name: "Facility Agent",
-  email: "facility-agent@localhost",
-};
-
 /** Repository access that a workspace needs before preparation. */
 export interface RepositoryAccess {
   issue(orgId: string, projectId: string): Promise<GithubWorkspaceCredentials>;
-}
-
-export function isLocalAlias(value: string) {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value) && !/\.git$/i.test(value);
 }
 
 export async function projectRepositoryRows(db: FacilityDb, orgId: string, projectId: string) {
@@ -144,27 +142,32 @@ export class LocalRepositorySnapshots implements LocalSnapshotProvider {
 
   async resolve(orgId: string, projectId: string, repositoryId?: string) {
     const row = await this.repository(orgId, projectId, repositoryId);
-    return { row, commit: await this.host.resolve(row.sourcePath, row.defaultBranch) };
+    return { row, commit: await this.host.resolve(row, row.defaultBranch) };
   }
 
   async snapshot(orgId: string, projectId: string, repositoryId: string, commit?: string) {
     const row = await this.repository(orgId, projectId, repositoryId);
-    const revision = commit ?? (await this.host.resolve(row.sourcePath, row.defaultBranch));
+    const revision = commit ?? (await this.host.resolve(row, row.defaultBranch));
     const [bundle, warnings] = await Promise.all([
-      this.host.snapshot(row.sourcePath, revision),
-      this.host.warnings(row.sourcePath, revision),
+      this.host.snapshot(row, revision),
+      this.host.warnings(row, revision),
     ]);
     return { commit: revision, branch: row.defaultBranch, bundle, warnings };
   }
 }
 
-/** Reads `.facility.yml` from the primary repository's default branch at one pinned commit. */
+/**
+ * Reads `.facility.yml` from the primary repository at one commit: the story's
+ * imported revision when there is one, otherwise the default branch's head.
+ */
 export class LocalProjectManifestSource implements ProjectManifestSource {
   constructor(private readonly snapshots: LocalRepositorySnapshots) {}
 
-  async load(orgId: string, projectId: string): Promise<ProjectManifest> {
-    const { row, commit } = await this.snapshots.resolve(orgId, projectId);
-    const source = await this.snapshots.host.readFile(row.sourcePath, commit, ".facility.yml");
+  async load(orgId: string, projectId: string, pinned?: PinnedRevisions): Promise<ProjectManifest> {
+    const row = await this.snapshots.repository(orgId, projectId);
+    const commit =
+      pinned?.[row.id]?.revision ?? (await this.snapshots.host.resolve(row, row.defaultBranch));
+    const source = await this.snapshots.host.readFile(row, commit, ".facility.yml");
     if (source === undefined) {
       throw new ProjectEnvironmentError(
         "project_manifest_not_found",
@@ -186,7 +189,7 @@ export class LocalAgentCatalogSource implements AgentCatalogSource {
     try {
       const { row, commit } = await this.snapshots.resolve(orgId, projectId);
       const files = await this.snapshots.host.files(
-        row.sourcePath,
+        row,
         commit,
         [".agents", ".claude/skills"],
         (path) => isAgentManifestPath(path) || isProjectSkillPath(path),
@@ -228,9 +231,9 @@ export class SourceAwareProjectManifestSource implements ProjectManifestSource {
     private readonly local: ProjectManifestSource,
   ) {}
 
-  async load(orgId: string, projectId: string) {
+  async load(orgId: string, projectId: string, pinned?: PinnedRevisions) {
     return (await loadProjectSource(this.db, orgId, projectId)) === "local"
-      ? this.local.load(orgId, projectId)
+      ? this.local.load(orgId, projectId, pinned)
       : this.github.load(orgId, projectId);
   }
 }

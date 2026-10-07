@@ -60,6 +60,8 @@ export const orgs = pgTable("orgs", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   settings: jsonb("settings").notNull().default(sql`'{}'::jsonb`),
+  /** `local` admits members without a GitHub App installation. */
+  accessMode: text("access_mode").notNull().default("github"),
   ...timestamps,
 });
 
@@ -229,6 +231,8 @@ export const projectRepositories = pgTable(
     source: text("source").$type<"github" | "local">().notNull().default("github"),
     /** Canonical host path of a local repository, validated against approved roots. */
     sourcePath: text("source_path"),
+    /** Canonical Git common directory of a local repository; one organization owns it. */
+    sourceRepository: text("source_repository"),
     ...timestamps,
   },
   (table) => [
@@ -241,10 +245,14 @@ export const projectRepositories = pgTable(
     uniqueIndex("project_repositories_local_path_uidx")
       .on(table.projectId, table.sourcePath)
       .where(sql`${table.source} = 'local'`),
-    index("project_repositories_local_path_idx")
-      .on(table.sourcePath)
+    index("project_repositories_local_repository_idx")
+      .on(table.sourceRepository)
       .where(sql`${table.source} = 'local'`),
     check("project_repositories_source_check", sql`${table.source} in ('github', 'local')`),
+    check(
+      "project_repositories_source_shape_check",
+      sql`(${table.source} = 'github' AND ${table.sourcePath} IS NULL AND ${table.sourceRepository} IS NULL AND ${table.owner} <> '_local') OR (${table.source} = 'local' AND ${table.owner} = '_local' AND ${table.installationId} IS NULL AND ${table.sourcePath} IS NOT NULL AND left(${table.sourcePath}, 1) = '/' AND ${table.sourceRepository} IS NOT NULL AND left(${table.sourceRepository}, 1) = '/')`,
+    ),
     uniqueIndex("project_repositories_org_project_id_uidx").on(
       table.orgId,
       table.projectId,
@@ -673,6 +681,10 @@ export const workspaces = pgTable(
     index("workspaces_org_project_state_idx").on(table.orgId, table.projectId, table.state),
     check("workspaces_provider_check", sql`${table.provider} in ('docker', 'vercel', 'fake')`),
     check("workspaces_next_event_seq_check", sql`${table.nextEventSeq} > 0`),
+    check(
+      "workspaces_source_revisions_check",
+      sql`jsonb_typeof(${table.sourceRevisions}) = 'object'`,
+    ),
     check(
       "workspaces_state_check",
       sql`${table.state} in ('creating', 'running', 'sleeping', 'error', 'deleting', 'destroyed')`,
@@ -1544,6 +1556,10 @@ export const storyExports = pgTable(
   (table) => [
     index("story_exports_story_created_idx").on(table.orgId, table.storyId, table.createdAt.desc()),
     check("story_exports_commit_count_check", sql`${table.commitCount} > 0`),
+    check(
+      "story_exports_sha_check",
+      sql`${table.baseSha} ~ '^[0-9a-f]{40}([0-9a-f]{24})?$' AND ${table.headSha} ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'`,
+    ),
     foreignKey({
       name: "story_exports_story_scope_fk",
       columns: [table.orgId, table.projectId, table.storyId],

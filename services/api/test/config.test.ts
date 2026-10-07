@@ -58,6 +58,15 @@ describe("Facility 0.12 configuration", () => {
         FACILITY_LOCAL_REPOSITORY_OWNER_UIDS: "",
       }).localRepositoryOwnerUids,
     ).toBeUndefined();
+    // Compose passes unset settings as empty strings; they mean "not configured".
+    expect(
+      readConfig({
+        ...validEnv,
+        FACILITY_LOCAL_SNAPSHOT_MAX_BYTES: "",
+        FACILITY_LOCAL_GIT_NAME: "",
+        FACILITY_LOCAL_GIT_EMAIL: "",
+      }),
+    ).toMatchObject({ localSnapshotMaxBytes: undefined, localGitIdentity: undefined });
   });
 
   it("requires an exact 32-byte base64 master key", () => {
@@ -86,6 +95,13 @@ describe("Facility 0.12 configuration", () => {
         ...validEnv,
         FACILITY_INSECURE_DEV: "1",
         PUBLIC_URL: "http://facility.internal:4400",
+      }),
+    ).toThrow("FACILITY_INSECURE_DEV requires loopback PUBLIC_URL and WEB_URL");
+    expect(() =>
+      readConfig({
+        ...validEnv,
+        FACILITY_INSECURE_DEV: "1",
+        WEB_URL: "http://192.168.1.20:3400",
       }),
     ).toThrow("FACILITY_INSECURE_DEV requires loopback PUBLIC_URL and WEB_URL");
   });

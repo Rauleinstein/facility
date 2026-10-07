@@ -90,8 +90,8 @@ export async function init(flags, pkgRoot, version) {
     BUILD_MODEL: flags["build-model"] || "claude-fable-5",
     REVIEW_MODEL: flags["review-model"] || "claude-sonnet-5",
     PLAN_MODEL: flags["plan-model"] || "claude-opus-4-8",
-    CODEX_BUILD_MODEL: flags["codex-build-model"] || "gpt-6-luna",
-    CODEX_PLAN_MODEL: flags["codex-plan-model"] || "gpt-6-luna",
+    CODEX_BUILD_MODEL: flags["codex-build-model"] || "gpt-5.6-sol",
+    CODEX_PLAN_MODEL: flags["codex-plan-model"] || "gpt-5.6-sol",
   };
 
   const template = (relativePath) =>

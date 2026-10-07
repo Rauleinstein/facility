@@ -216,6 +216,7 @@ export default async function StoryPage({
             storyId={story.id}
             canExecute={canExecute}
             canReview={can(permissions, "stories:write")}
+            revision={`${activeTurn?.id ?? ""}:${activeTurn?.state ?? "idle"}:${bundle.turns.length}`}
           />
         </section>
       ) : null}

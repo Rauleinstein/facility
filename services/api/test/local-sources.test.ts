@@ -3,10 +3,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { isLocalAlias } from "../src/repositories/local.js";
 import { newFilesPatch } from "../src/repositories/local-kickstart.js";
 import {
   DEFAULT_LOCAL_GIT_IDENTITY,
-  isLocalAlias,
   ProjectRepositoryAccess,
   projectSource,
 } from "../src/repositories/sources.js";
@@ -31,12 +31,25 @@ describe("local repository sources", () => {
     const local = parseProjectManifest(`version: 1
 repositories:
   primary: local:payments
-  related: [local:shared-lib, github.com/acme/tools]
+  related: [local:shared-lib]
 ${environment}`);
     expect(local.repositories).toEqual({
       primary: "local:payments",
-      related: ["local:shared-lib", "acme/tools"],
+      related: ["local:shared-lib"],
     });
+    // A project never mixes sources, so neither does its manifest.
+    for (const [primary, related] of [
+      ["local:payments", "github.com/acme/tools"],
+      ["github.com/acme/app", "local:shared-lib"],
+    ]) {
+      expect(() =>
+        parseProjectManifest(`version: 1
+repositories:
+  primary: ${primary}
+  related: [${related}]
+${environment}`),
+      ).toThrow();
+    }
     const github = parseProjectManifest(`version: 1
 repositories:
   primary: https://github.com/acme/app.git

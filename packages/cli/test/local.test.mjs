@@ -128,6 +128,18 @@ test("repos add-local registers through the API and reports what is not imported
     assert.equal(requests[0].headers.authorization, "Bearer fak_secret");
     assert.deepEqual(requests[0].body, { path: dir, alias: "shop" });
 
+    // Scripts see the same contract: what stays behind is part of the JSON result.
+    const json = await runCliAsync(
+      ["repos", "add-local", dir, "--project=proj_1", "--alias=shop", "--json"],
+      env,
+    );
+    assert.equal(json.status, 0, json.stderr);
+    assert.deepEqual(JSON.parse(json.stdout).leftBehind, {
+      paths: ["draft.txt", "package.json"],
+      unmergedCommits: 0,
+      error: null,
+    });
+
     const conflict = await runCliAsync(
       ["repos", "add-local", dir, "--project=proj_1", "--alias=taken", "--json"],
       env,

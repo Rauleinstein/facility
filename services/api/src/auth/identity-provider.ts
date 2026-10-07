@@ -253,6 +253,11 @@ export class ExternalIdentityProvider {
     } catch {
       throw new ApiError(401, "auth_failed", "OIDC identity token is invalid");
     }
+    // Any GitHub claim makes this a broker identity, which must carry the whole
+    // instance-bound GitHub claim set. A partial set is refused, never downgraded.
+    if (!Object.keys(payload).some((claim) => claim.startsWith("github_"))) {
+      return this.plainOidcIdentity(payload, transaction, metadata.issuer);
+    }
     const claims = z
       .object({
         nonce: z.literal(transaction.nonce),
@@ -289,6 +294,46 @@ export class ExternalIdentityProvider {
           accountId: claims.data.github_account_id,
         },
       ],
+    };
+  }
+
+  /**
+   * A standard OIDC identity: the signature, issuer, audience and nonce are
+   * already verified, and the email must be verified too. An identity provider
+   * that emits `facility_instance_id` must emit this instance's id.
+   */
+  private plainOidcIdentity(
+    payload: Record<string, unknown>,
+    transaction: AuthTransaction,
+    issuer: string,
+  ): ExternalIdentity {
+    const claims = z
+      .object({
+        nonce: z.literal(transaction.nonce),
+        sub: z.string().min(1),
+        email: z.string().email(),
+        email_verified: z.literal(true),
+        facility_instance_id: z.literal(requiredConfig(this.config.facilityInstanceId)).optional(),
+        name: z.string().optional(),
+        picture: z.string().url().optional(),
+      })
+      .safeParse(payload);
+    if (!claims.success)
+      throw new ApiError(
+        403,
+        "identity_mismatch",
+        "OIDC identity is not valid for this Facility instance",
+      );
+    const email = normalizedEmail(claims.data.email);
+    return {
+      provider: "oidc",
+      issuer,
+      subject: claims.data.sub,
+      email,
+      emailVerified: true,
+      verifiedEmails: [email],
+      name: claims.data.name,
+      avatarUrl: claims.data.picture,
     };
   }
 

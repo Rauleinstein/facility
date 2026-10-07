@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { mkdtempSync } from "node:fs";
 import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join, normalize, relative, sep } from "node:path";
 import { isSafeGitBranch } from "../workspaces/git-branch.js";
 
 /** Local repository access is disabled until an operator approves at least one root. */
@@ -11,16 +12,31 @@ export type LocalRepositoryOptions = {
   ownerUids?: number[];
   maxSnapshotBytes?: number;
   maxFileBytes?: number;
-  gitTimeoutMs?: number;
 };
 
 export type LocalRepositoryInspection = {
   path: string;
   defaultBranch: string;
   headSha: string;
-  bare: boolean;
+  /** Canonical Git common directory: one repository has one key, whichever worktree registered it. */
+  repositoryKey: string;
   warnings: string[];
 };
+
+/** Author of agent commits in local workspaces unless FACILITY_LOCAL_GIT_* overrides it. */
+export const DEFAULT_LOCAL_GIT_IDENTITY = {
+  name: "Facility Agent",
+  email: "facility-agent@localhost",
+};
+
+/** The name a local repository is registered under and referenced by as `local:<alias>`. */
+export function isLocalAlias(value: string) {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(value) && !/\.git$/i.test(value);
+}
+
+/** A registered repository: its canonical path and the Git common directory recorded with it. */
+export type LocalSourceRefObject = { sourcePath: string; sourceRepository?: string | null };
+export type LocalSourceRef = string | LocalSourceRefObject;
 
 export type LocalTreeEntry = { mode: string; type: string; oid: string; path: string };
 
@@ -37,7 +53,9 @@ export class LocalRepositoryError extends Error {
 
 const DEFAULT_MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
-const SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+const GIT_TIMEOUT_MS = 120_000;
+/** A full SHA-1 or SHA-256 object id. */
+export const COMMIT_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 /**
  * Read-only access to Git repositories on the machine running Facility.
@@ -52,7 +70,6 @@ export class LocalRepositoryHost {
   private readonly ownerUids: number[] | undefined;
   private readonly maxSnapshotBytes: number;
   private readonly maxFileBytes: number;
-  private readonly gitTimeoutMs: number;
 
   constructor(options: LocalRepositoryOptions) {
     for (const root of options.roots) {
@@ -69,7 +86,6 @@ export class LocalRepositoryHost {
     this.ownerUids = options.ownerUids ?? (uid === undefined ? undefined : [uid]);
     this.maxSnapshotBytes = options.maxSnapshotBytes ?? DEFAULT_MAX_SNAPSHOT_BYTES;
     this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
-    this.gitTimeoutMs = options.gitTimeoutMs ?? 120_000;
   }
 
   get enabled() {
@@ -80,40 +96,54 @@ export class LocalRepositoryHost {
   async inspect(inputPath: string, requestedBranch?: string): Promise<LocalRepositoryInspection> {
     this.assertEnabled();
     const path = await this.canonical(inputPath);
-    const bare = await this.assertRepositoryRoot(path);
+    const repositoryKey = await this.assertRepositoryRoot(path);
     const defaultBranch = requestedBranch ?? (await this.currentBranch(path));
-    if (!isSafeGitBranch(defaultBranch)) {
-      throw new LocalRepositoryError(
-        "local_repository_branch_invalid",
-        "The default branch name is not a valid Git branch",
-      );
-    }
     const headSha = await this.resolveBranch(path, defaultBranch);
-    return { path, defaultBranch, headSha, bare, warnings: await this.warnings(path, headSha) };
+    return {
+      path,
+      defaultBranch,
+      headSha,
+      repositoryKey,
+      warnings: await this.warnings(path, headSha),
+    };
   }
 
-  /** Re-checks a registered path before any read. */
-  async verify(storedPath: string): Promise<string> {
+  /**
+   * Re-checks a registered path before any read. With the key recorded at
+   * registration, a path that now belongs to a different repository is refused.
+   */
+  async verify(storedPath: string, repositoryKey?: string): Promise<string> {
     this.assertEnabled();
     const path = await this.canonical(storedPath);
-    if (path !== storedPath) {
+    const key = path === storedPath ? await this.assertRepositoryRoot(path) : undefined;
+    if (!key || (repositoryKey !== undefined && key !== repositoryKey)) {
       throw new LocalRepositoryError(
         "local_repository_path_changed",
         "The registered repository path now resolves to a different location; register it again",
         409,
       );
     }
-    await this.assertRepositoryRoot(path);
     return path;
   }
 
-  async resolve(storedPath: string, branch: string): Promise<string> {
-    const path = await this.verify(storedPath);
+  /** Verifies a registered repository given its stored path and, when recorded, its key. */
+  private open(source: LocalSourceRef) {
+    return typeof source === "string"
+      ? this.verify(source)
+      : this.verify(source.sourcePath, source.sourceRepository ?? undefined);
+  }
+
+  async resolve(source: LocalSourceRef, branch: string): Promise<string> {
+    const path = await this.open(source);
     return this.resolveBranch(path, branch);
   }
 
-  async readFile(storedPath: string, commit: string, file: string): Promise<string | undefined> {
-    const path = await this.verify(storedPath);
+  async readFile(
+    source: LocalSourceRef,
+    commit: string,
+    file: string,
+  ): Promise<string | undefined> {
+    const path = await this.open(source);
     assertCommit(commit);
     const entry = (await this.tree(path, commit, [file])).find((item) => item.path === file);
     if (entry?.type !== "blob" || !["100644", "100755"].includes(entry.mode)) {
@@ -124,12 +154,12 @@ export class LocalRepositoryHost {
 
   /** Lists regular files and symlinks under the given tree prefixes at a pinned commit. */
   async files(
-    storedPath: string,
+    source: LocalSourceRef,
     commit: string,
     prefixes: string[],
     include: (path: string) => boolean = () => true,
   ) {
-    const path = await this.verify(storedPath);
+    const path = await this.open(source);
     assertCommit(commit);
     const entries = await this.tree(path, commit, prefixes);
     const files = new Map<string, string>();
@@ -142,8 +172,8 @@ export class LocalRepositoryHost {
   }
 
   /** Paths of files at a pinned commit, without reading their content. */
-  async paths(storedPath: string, commit: string, prefixes: string[] = []) {
-    const path = await this.verify(storedPath);
+  async paths(source: LocalSourceRef, commit: string, prefixes: string[] = []) {
+    const path = await this.open(source);
     assertCommit(commit);
     return (await this.tree(path, commit, prefixes))
       .filter((entry) => entry.type === "blob")
@@ -155,8 +185,8 @@ export class LocalRepositoryHost {
    * only ref is refs/facility/import. The copy happens in a Facility-owned
    * staging repository; the source repository is only read.
    */
-  async snapshot(storedPath: string, commit: string): Promise<Buffer> {
-    const path = await this.verify(storedPath);
+  async snapshot(source: LocalSourceRef, commit: string): Promise<Buffer> {
+    const path = await this.open(source);
     assertCommit(commit);
     const stage = await mkdtemp(join(tmpdir(), "facility-local-snapshot-"));
     try {
@@ -198,8 +228,8 @@ export class LocalRepositoryHost {
    * Content the first import cannot represent faithfully yet. Both probes stay
    * bounded on very large repositories: neither lists the whole tree.
    */
-  async warnings(storedPath: string, commit: string) {
-    const path = await this.verify(storedPath);
+  async warnings(source: LocalSourceRef, commit: string) {
+    const path = await this.open(source);
     assertCommit(commit);
     const warnings: string[] = [];
     if ((await this.tree(path, commit, [".gitmodules"])).length > 0) {
@@ -207,16 +237,11 @@ export class LocalRepositoryHost {
         "Submodules are not imported. Their directories appear empty in Facility workspaces.",
       );
     }
-    const lfs = await this.git(path, [
-      "grep",
-      "-l",
-      "-e",
-      "filter=lfs",
-      commit,
-      "--",
-      ".gitattributes",
-      "**/.gitattributes",
-    ]).catch(() => "");
+    const lfs = await this.git(
+      path,
+      ["grep", "-l", "-e", "filter=lfs", commit, "--", ".gitattributes", "**/.gitattributes"],
+      { okExitCodes: [1] },
+    );
     if (lfs.trim()) {
       warnings.push(
         "Git LFS content is not imported. LFS files appear as pointer files in Facility workspaces.",
@@ -249,6 +274,9 @@ export class LocalRepositoryHost {
         "Provide an absolute repository path without '..' segments",
       );
     }
+    // Refuse before touching the filesystem, so the API never reveals whether a
+    // path outside the approved roots exists.
+    await this.assertInsideRoots(normalize(inputPath));
     let path: string;
     try {
       path = await realpath(inputPath);
@@ -260,6 +288,12 @@ export class LocalRepositoryHost {
       );
     }
     await this.assertInsideRoots(path);
+    await this.assertDirectory(path);
+    return path;
+  }
+
+  /** A directory under an approved root, owned by a trusted user. */
+  private async assertDirectory(path: string) {
     const info = await stat(path);
     if (!info.isDirectory()) {
       throw new LocalRepositoryError(
@@ -274,13 +308,15 @@ export class LocalRepositoryHost {
         403,
       );
     }
-    return path;
   }
 
   private async assertInsideRoots(path: string) {
     for (const root of this.roots) {
       const canonicalRoot = await realpath(root).catch(() => undefined);
-      if (canonicalRoot && isInside(canonicalRoot, path)) return;
+      // A missing root approves nothing. A canonical path cannot pass through a
+      // symlinked root, so matching the configured spelling only admits the
+      // lexical pre-check that runs before realpath.
+      if (canonicalRoot && (isInside(canonicalRoot, path) || isInside(root, path))) return;
     }
     throw new LocalRepositoryError(
       "local_repository_outside_roots",
@@ -289,6 +325,7 @@ export class LocalRepositoryHost {
     );
   }
 
+  /** Validates the repository at `path` and returns its canonical Git common directory. */
   private async assertRepositoryRoot(path: string) {
     let bare: boolean;
     try {
@@ -299,18 +336,8 @@ export class LocalRepositoryHost {
         "The path is not a Git repository",
       );
     }
-    if (!bare) {
-      const top = await realpath(
-        (await this.git(path, ["rev-parse", "--show-toplevel"])).trim(),
-      ).catch(() => "");
-      if (top !== path) {
-        throw new LocalRepositoryError(
-          "local_repository_not_root",
-          "Register the repository's top-level directory",
-        );
-      }
-    }
-    // Worktrees and gitfiles may point elsewhere; the object store must be approved too.
+    const directories: string[] = [];
+    // Worktrees and gitfiles may point elsewhere; the Git directories must be approved too.
     for (const flag of ["--absolute-git-dir", "--git-common-dir"]) {
       const value = (await this.git(path, ["rev-parse", flag])).trim();
       const directory = await realpath(isAbsolute(value) ? value : join(path, value)).catch(
@@ -323,8 +350,39 @@ export class LocalRepositoryHost {
         );
       }
       await this.assertInsideRoots(directory);
+      await this.assertDirectory(directory);
+      directories.push(directory);
     }
-    return bare;
+    const [gitDir, commonDir] = directories as [string, string];
+    // Git discovers a bare repository from any directory inside it, so a bare
+    // repository is registered only at its own Git directory.
+    const top = bare
+      ? gitDir
+      : await realpath((await this.git(path, ["rev-parse", "--show-toplevel"])).trim()).catch(
+          () => "",
+        );
+    if (top !== path) {
+      throw new LocalRepositoryError(
+        "local_repository_not_root",
+        "Register the repository's top-level directory",
+      );
+    }
+    // Objects and refs reachable through links or alternates would bypass the roots.
+    for (const entry of ["objects", "refs"]) {
+      const target = await realpath(join(commonDir, entry)).catch(() => undefined);
+      if (target) await this.assertInsideRoots(target);
+    }
+    const alternates = await readFile(
+      join(commonDir, "objects", "info", "alternates"),
+      "utf8",
+    ).catch(() => "");
+    if (alternates.trim()) {
+      throw new LocalRepositoryError(
+        "local_repository_alternates_unsupported",
+        "The repository borrows objects from another repository (objects/info/alternates); run git repack -a -d and remove the alternates file first",
+      );
+    }
+    return commonDir;
   }
 
   private async currentBranch(path: string) {
@@ -349,7 +407,7 @@ export class LocalRepositoryHost {
       const sha = (
         await this.git(path, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`])
       ).trim();
-      if (SHA.test(sha)) return sha;
+      if (COMMIT_SHA.test(sha)) return sha;
     } catch {
       // Distinguish an empty repository from a missing branch below.
     }
@@ -403,7 +461,7 @@ export class LocalRepositoryHost {
     return this.git(path, ["cat-file", "blob", oid]);
   }
 
-  private git(cwd: string, args: string[]) {
+  private git(cwd: string, args: string[], options: { okExitCodes?: number[] } = {}) {
     return new Promise<string>((resolve, reject) => {
       execFile(
         "git",
@@ -421,10 +479,10 @@ export class LocalRepositoryHost {
           env: hardenedGitEnvironment(),
           encoding: "utf8",
           maxBuffer: this.maxFileBytes * 4 + 64 * 1024 * 1024,
-          timeout: this.gitTimeoutMs,
+          timeout: GIT_TIMEOUT_MS,
         },
         (error, stdout, stderr) => {
-          if (error) {
+          if (error && !options.okExitCodes?.includes(error.code as number)) {
             reject(
               new LocalRepositoryError(
                 "local_repository_git_failed",
@@ -439,10 +497,10 @@ export class LocalRepositoryHost {
   }
 }
 
-/** Parses FACILITY_LOCAL_REPOSITORY_ROOTS: absolute paths separated by the platform delimiter. */
+/** Parses FACILITY_LOCAL_REPOSITORY_ROOTS: absolute POSIX paths separated by ':'. */
 export function parseLocalRepositoryRoots(value: string | undefined) {
   return (value ?? "")
-    .split(process.platform === "win32" ? ";" : ":")
+    .split(":")
     .map((root) => root.trim())
     .filter(Boolean);
 }
@@ -456,15 +514,19 @@ export function isInside(root: string, path: string) {
 }
 
 function assertCommit(commit: string) {
-  if (!SHA.test(commit)) {
+  if (!COMMIT_SHA.test(commit)) {
     throw new LocalRepositoryError("local_repository_revision_invalid", "Invalid commit id");
   }
 }
 
+/** A private, empty HOME: git must not read user configuration from a shared /tmp. */
+const gitHome = mkdtempSync(join(tmpdir(), "facility-git-home-"));
+
 function hardenedGitEnvironment(): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-    HOME: tmpdir(),
+    HOME: gitHome,
+    XDG_CONFIG_HOME: gitHome,
     LC_ALL: "C",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",

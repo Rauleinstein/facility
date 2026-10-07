@@ -66,8 +66,9 @@ export class LocalReviewService {
   async approve(
     input: { orgId: string; projectId: string; storyId: string; commitSha: string; note?: string },
     actor: ReviewActor,
+    options: { wake: boolean } = { wake: true },
   ) {
-    const context = await this.context(input.orgId, input.projectId, input.storyId);
+    const context = await this.context(input.orgId, input.projectId, input.storyId, options);
     await this.assertIdle(context);
     const state = await this.describe(context);
     if (state.headSha !== input.commitSha) {
@@ -118,8 +119,9 @@ export class LocalReviewService {
       note: string;
     },
     actor: ReviewActor,
+    options: { wake: boolean } = { wake: true },
   ) {
-    const context = await this.context(input.orgId, input.projectId, input.storyId);
+    const context = await this.context(input.orgId, input.projectId, input.storyId, options);
     const state = await this.describe(context);
     await appendStoryEvidence(this.db, {
       orgId: input.orgId,
@@ -141,7 +143,12 @@ export class LocalReviewService {
   async runChecks(input: { orgId: string; projectId: string; storyId: string }) {
     const context = await this.context(input.orgId, input.projectId, input.storyId);
     await this.assertIdle(context);
-    const manifest = await this.manifests.load(input.orgId, input.projectId);
+    // Check commands come from the configuration the story imported, not the host's head.
+    const manifest = await this.manifests.load(
+      input.orgId,
+      input.projectId,
+      context.workspace.sourceRevisions,
+    );
     const outcome = await this.environment.runChecks({
       orgId: input.orgId,
       projectId: input.projectId,
@@ -228,15 +235,24 @@ export class LocalReviewService {
         `^${state.baseSha}`,
       ]);
       await this.git(context, ["bundle", "verify", "--quiet", relativeFile]);
-      const encoded = (await this.exec(context, "base64", [file], ".")).replace(/\s+/g, "");
-      const bundle = Buffer.from(encoded, "base64");
-      if (bundle.length === 0 || bundle.length > MAX_EXPORT_BYTES) {
+      // A turn may have committed after the approval was checked; export only the approved commit.
+      const heads = await this.git(context, ["bundle", "list-heads", relativeFile]);
+      if (heads.split(/\s+/)[0] !== state.headSha) {
+        throw new LocalReviewError(
+          "review_commit_mismatch",
+          "The story branch moved while exporting; review the latest changes and approve them",
+        );
+      }
+      const size = Number(await this.exec(context, "stat", ["-c", "%s", file], "."));
+      if (!(size > 0 && size <= MAX_EXPORT_BYTES)) {
         throw new LocalReviewError(
           "export_too_large",
           `The export bundle must be between 1 and ${MAX_EXPORT_BYTES} bytes`,
           413,
         );
       }
+      const encoded = (await this.exec(context, "base64", [file], ".")).replace(/\s+/g, "");
+      const bundle = Buffer.from(encoded, "base64");
       const patch = await this.git(context, [
         "format-patch",
         "--stdout",
@@ -482,7 +498,14 @@ export class LocalReviewService {
 
     const checks = new Map<string, Record<string, unknown>>();
     for (const row of checkRows) {
-      const data = row.data as { name?: string; commitSha?: string };
+      const data = row.data as {
+        name?: string;
+        commitSha?: string;
+        dirty?: boolean;
+        commitChanged?: boolean;
+      };
+      // A result counts for a commit only if it ran against exactly that clean tree.
+      if (data.dirty || data.commitChanged) continue;
       if (!data.name || data.commitSha !== branchHead || checks.has(data.name)) continue;
       checks.set(data.name, {
         ...(row.data as Record<string, unknown>),
@@ -600,7 +623,7 @@ type ExportRow = {
 };
 
 export function exportReviewBranch(row: { id: string; branch: string }) {
-  return `facility-review/${row.branch.replace(/^facility\//, "")}-${row.id.slice(-6)}`;
+  return `facility-review/${row.branch.replace(/^facility\//, "")}-${row.id}`;
 }
 
 function presentExport(row: ExportRow, defaultBranch: string) {
@@ -616,13 +639,18 @@ function presentExport(row: ExportRow, defaultBranch: string) {
     createdBy: row.createdBy,
     createdAt: row.createdAt,
     reviewBranch,
-    // Importing creates a new branch in the user's repository. Merging stays their decision.
+    // Importing creates a new branch in the user's repository and leaves the checked-out
+    // branch and working tree alone. Merging stays their decision. Save the downloaded
+    // files outside the repository so they never appear as untracked files.
     instructions: [
-      `git fetch ./${bundleFile} "refs/heads/${row.branch}:refs/heads/${reviewBranch}"`,
+      `git fetch /path/to/${bundleFile} "refs/heads/${row.branch}:refs/heads/${reviewBranch}"`,
       `git log --oneline ${defaultBranch}..${reviewBranch}`,
       `git merge ${reviewBranch}   # when you are ready; resolve any conflicts as usual`,
     ],
-    patchInstructions: [`git am ./${row.id}.patch`],
+    patchInstructions: [
+      `git switch -c ${reviewBranch} ${row.baseSha}`,
+      `git am /path/to/${row.id}.patch`,
+    ],
   };
 }
 

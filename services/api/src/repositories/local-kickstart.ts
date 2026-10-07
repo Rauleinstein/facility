@@ -1,6 +1,6 @@
 import { renderWorkspaceKickstart } from "@facility/core";
 import { detectWorkspace, inferStartCommand, type KickstartAnswers } from "../github/kickstart.js";
-import type { LocalRepositoryHost } from "./local.js";
+import type { LocalRepositoryHost, LocalSourceRefObject } from "./local.js";
 
 const DETECTION_FILES = [
   "package.json",
@@ -20,15 +20,15 @@ const DETECTION_FILES = [
  */
 export async function localKickstart(
   host: LocalRepositoryHost,
-  repository: { name: string; defaultBranch: string; sourcePath: string },
+  repository: { name: string; defaultBranch: string } & LocalSourceRefObject,
   answers: KickstartAnswers,
 ) {
-  const baseSha = await host.resolve(repository.sourcePath, repository.defaultBranch);
-  const paths = await host.paths(repository.sourcePath, baseSha, [...DETECTION_FILES, ".agents"]);
+  const baseSha = await host.resolve(repository, repository.defaultBranch);
+  const paths = await host.paths(repository, baseSha, [...DETECTION_FILES, ".agents"]);
   const existing = new Map<string, string>();
   for (const path of paths) {
     if (path === "package.json") {
-      existing.set(path, (await host.readFile(repository.sourcePath, baseSha, path)) ?? "");
+      existing.set(path, (await host.readFile(repository, baseSha, path)) ?? "");
     } else if (DETECTION_FILES.includes(path) || /^\.agents\/[^/]+\.md$/.test(path)) {
       // Only presence matters for these files; their content is never read.
       existing.set(path, "");

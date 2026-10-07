@@ -48,6 +48,7 @@ function help() {
   ]);
   helpGroup("Instance administration", [
     ["instance bootstrap", "create the first organization, owner, and GitHub installation"],
+    ["instance bootstrap --local", "create the first local-mode organization and owner (no GitHub)"],
   ]);
   console.log("");
   item(dim("init flags: --yes --force --dir=<path> --repo=<owner/name> --local[=<alias>]"));
@@ -148,6 +149,7 @@ function validateLocalFlags(command, flags) {
       "github-installation-id",
       "github-account-login",
       "github-account-type",
+      "local",
       "json",
       "help",
     ]),
@@ -163,7 +165,7 @@ function validateLocalFlags(command, flags) {
       : command === "repos"
         ? ["project", "alias", "branch", "api"]
       : command === "instance"
-        ? [...allowed].filter((name) => !["json", "help"].includes(name))
+        ? [...allowed].filter((name) => !["local", "json", "help"].includes(name))
         : command === "init"
         ? [
             "dir",
@@ -190,6 +192,7 @@ function validateLocalFlags(command, flags) {
     "force",
     "help",
     "json",
+    ...(command === "instance" ? ["local"] : []),
   ]) {
     if (name in flags && flags[name] !== true) return `--${name} does not take a value`;
   }

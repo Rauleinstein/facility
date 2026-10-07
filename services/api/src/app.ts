@@ -3,7 +3,6 @@ import {
   apiKeys,
   auditEvents,
   createDb,
-  githubInstallations,
   orgMembers,
   orgs,
   projects,
@@ -29,6 +28,7 @@ import PgBoss from "pg-boss";
 import { uuidv7 } from "uuidv7";
 import { z } from "zod";
 import { registerAuthorizationServer } from "./auth/authorization-server.js";
+import { orgAdmitsMembers } from "./auth/org-admission.js";
 import { readConfig } from "./config.js";
 import { ApiError, sendError } from "./errors.js";
 import { beginIdempotentRequest, completeIdempotentRequest } from "./idempotency.js";
@@ -471,7 +471,6 @@ async function resolvePrincipal(
           .from(orgMembers)
           .innerJoin(rolesTable, eq(orgMembers.roleId, rolesTable.id))
           .innerJoin(users, eq(orgMembers.userId, users.id))
-          .innerJoin(githubInstallations, eq(githubInstallations.orgId, orgMembers.orgId))
           .leftJoin(
             userIdentities,
             and(eq(userIdentities.userId, users.id), eq(userIdentities.provider, "github")),
@@ -481,7 +480,7 @@ async function resolvePrincipal(
               eq(users.id, userId),
               eq(orgMembers.orgId, orgId),
               eq(users.status, "active"),
-              isNull(githubInstallations.suspendedAt),
+              orgAdmitsMembers(db, orgMembers.orgId),
             ),
           )
           .limit(1)

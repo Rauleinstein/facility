@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, TextArea } from "@facility/ui";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { requestCompose } from "@/components/story/story-conversation";
 import type { LocalReviewState } from "@/lib/api";
 import { clientApi } from "@/lib/client-api";
@@ -34,11 +34,14 @@ export function LocalReview({
   storyId,
   canExecute,
   canReview,
+  revision,
 }: {
   projectId: string;
   storyId: string;
   canExecute: boolean;
   canReview: boolean;
+  /** Changes whenever a turn starts or ends; an open panel then reloads its state. */
+  revision: string;
 }) {
   const [state, setState] = useState<LocalReviewState | null>(null);
   const [busy, setBusy] = useState<Action | null>(null);
@@ -63,6 +66,14 @@ export function LocalReview({
     setState("state" in result.data ? result.data.state : result.data);
     return true;
   }
+
+  // A finished turn moves the story head: reload what is shown so approval targets it.
+  const shownRevision = useRef(revision);
+  useEffect(() => {
+    if (shownRevision.current === revision) return;
+    shownRevision.current = revision;
+    if (opened) void run("load", "GET");
+  });
 
   const downloads = `/api${base}/exports`;
   return (

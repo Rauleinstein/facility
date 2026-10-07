@@ -53,6 +53,55 @@ export type PullRequestSummary = {
   updatedAt: Date;
 };
 
+/** Review of a local-repository story: the counterpart of an open pull request. */
+export type LocalReviewSummary = {
+  status: "awaiting_review" | "approved" | "changes_requested";
+  checksFailing: boolean;
+};
+
+type LocalEvidence = {
+  type: string;
+  data: {
+    commitSha?: string;
+    name?: string;
+    exitCode?: number;
+    dirty?: boolean;
+    commitChanged?: boolean;
+  };
+};
+
+/**
+ * Summarizes local review from persisted evidence only. `head` is the story
+ * branch after its latest turn; `imported` are the source commits the workspace
+ * imported; `events` are review and check evidence, newest first. A story whose
+ * head is still an imported commit, or that has uncommitted work, has nothing
+ * to review yet.
+ */
+export function localReviewSummary(input: {
+  head: { sha: string; dirty: boolean } | null;
+  imported: string[];
+  events: LocalEvidence[];
+}): LocalReviewSummary | null {
+  const head = input.head;
+  if (!head || head.dirty || input.imported.includes(head.sha)) return null;
+  const review = input.events.find((event) => event.type.startsWith("local_review."));
+  const reviewedHead = review?.data.commitSha === head.sha;
+  const status =
+    reviewedHead && review?.type === "local_review.approved"
+      ? "approved"
+      : reviewedHead && review?.type === "local_review.changes_requested"
+        ? "changes_requested"
+        : "awaiting_review";
+  const latestCheck = new Map<string, number | undefined>();
+  for (const event of input.events) {
+    const data = event.data;
+    if (event.type !== "local_check.completed" || data.commitSha !== head.sha) continue;
+    if (data.dirty || data.commitChanged || !data.name || latestCheck.has(data.name)) continue;
+    latestCheck.set(data.name, data.exitCode);
+  }
+  return { status, checksFailing: [...latestCheck.values()].some((code) => code !== 0) };
+}
+
 export type PhaseInput = {
   story?: {
     status: string;
@@ -63,6 +112,7 @@ export type PhaseInput = {
   pullRequest?: PullRequestSummary | null;
   activeTurn?: { state: "queued" | "running" } | null;
   openAttention: Array<{ kind: string }>;
+  localReview?: LocalReviewSummary | null;
 };
 
 export type PhaseResult = { phase: WorkPhase; reason: PhaseReason };
@@ -71,6 +121,7 @@ export type PhaseResult = { phase: WorkPhase; reason: PhaseReason };
 export function derivePhase(input: PhaseInput): PhaseResult {
   const story = input.story ?? null;
   const pull = input.pullRequest ?? null;
+  const local = input.localReview ?? null;
   if (story?.deletedAt) return { phase: "archived", reason: "deleted" };
   if (story?.status === "archived") return { phase: "archived", reason: "archived" };
   if (pull?.state === "merged") return { phase: "done", reason: "merged" };
@@ -86,6 +137,10 @@ export function derivePhase(input: PhaseInput): PhaseResult {
   if (pull?.state === "open" && pull.reviewState === "changes_requested") {
     return { phase: "attention", reason: "changes_requested" };
   }
+  if (local?.checksFailing) return { phase: "attention", reason: "checks_failing" };
+  if (local?.status === "changes_requested") {
+    return { phase: "attention", reason: "changes_requested" };
+  }
   if (story?.status === "attention") return { phase: "attention", reason: "attention" };
   if (pull?.state === "open" && pull.draft) {
     return { phase: "in_progress", reason: "draft_pull_request" };
@@ -94,6 +149,13 @@ export function derivePhase(input: PhaseInput): PhaseResult {
     return {
       phase: "review",
       reason: pull.reviewState === "approved" ? "approved" : "awaiting_review",
+    };
+  }
+  // An export is not a merge: an approved local story stays in review until done.
+  if (local) {
+    return {
+      phase: "review",
+      reason: local.status === "approved" ? "approved" : "awaiting_review",
     };
   }
   if (story) {

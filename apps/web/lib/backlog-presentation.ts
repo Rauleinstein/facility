@@ -45,7 +45,7 @@ export function activityLine(item: BacklogItem, now = new Date()): string {
     case "changes_requested":
       return "Changes requested in review";
     case "approved":
-      return "Approved, ready to merge";
+      return pull ? "Approved, ready to merge" : "Approved, ready to export";
     case "awaiting_review":
       return pull?.ciState === "pending"
         ? "Awaiting review · checks running"

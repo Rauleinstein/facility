@@ -218,6 +218,100 @@ describe("commercial OIDC broker integration", () => {
   });
 });
 
+describe("standard OIDC identity without GitHub claims", async () => {
+  const { privateKey, publicKey } = await generateKeyPair("ES256");
+  const foreign = await generateKeyPair("ES256");
+  const publicJwk = { ...(await exportJWK(publicKey)), kid: "idp", alg: "ES256" };
+  const claims = {
+    nonce: transaction.nonce,
+    email: "Owner@Example.com",
+    email_verified: true,
+    name: "Local Owner",
+  };
+  type Claims = Record<string, unknown>;
+  const sign = (
+    overrides: Claims = {},
+    options: { audience?: string; expiresAt?: string | number; key?: typeof privateKey } = {},
+  ) =>
+    new SignJWT({ ...claims, ...overrides })
+      .setProtectedHeader({ alg: "ES256", kid: "idp" })
+      .setIssuer("https://idp.test")
+      .setAudience(options.audience ?? "facility-client")
+      .setSubject("user-42")
+      .setIssuedAt()
+      .setExpirationTime(options.expiresAt ?? "5m")
+      .sign(options.key ?? privateKey);
+
+  function provider(idToken: string) {
+    const fakeFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration"))
+        return response({
+          issuer: "https://idp.test",
+          authorization_endpoint: "https://idp.test/authorize",
+          token_endpoint: "https://idp.test/token",
+          jwks_uri: "https://idp.test/jwks",
+        });
+      if (url.endsWith("/token")) return response({ id_token: idToken });
+      if (url.endsWith("/jwks")) return response({ keys: [publicJwk] });
+      return response({}, 404);
+    };
+    return new ExternalIdentityProvider(
+      {
+        ...base,
+        authIdentityProvider: "oidc",
+        oidcIssuer: "https://idp.test",
+        oidcClientId: "facility-client",
+        facilityInstanceId: "instance_1",
+      },
+      fakeFetch,
+    );
+  }
+
+  it("returns an issuer-scoped identity with a verified email", async () => {
+    await expect(provider(await sign()).exchange("code", transaction)).resolves.toEqual({
+      provider: "oidc",
+      issuer: "https://idp.test",
+      subject: "user-42",
+      email: "owner@example.com",
+      emailVerified: true,
+      verifiedEmails: ["owner@example.com"],
+      name: "Local Owner",
+      avatarUrl: undefined,
+    });
+  });
+
+  it("accepts this instance's id when the identity provider emits one", async () => {
+    await expect(
+      provider(await sign({ facility_instance_id: "instance_1" })).exchange("code", transaction),
+    ).resolves.toMatchObject({ provider: "oidc", subject: "user-42" });
+  });
+
+  it.each([
+    ["an unverified email", { email_verified: false }],
+    ["a missing email", { email: undefined }],
+    ["a replayed nonce", { nonce: "replayed-nonce" }],
+    ["another instance's id", { facility_instance_id: "another_instance" }],
+    // A partial GitHub claim set is a malformed broker identity, never a plain one.
+    ["a partial GitHub claim set", { github_user_id: 123 }],
+    ["a GitHub installation claim alone", { github_installation_id: 456 }],
+  ])("refuses %s", async (_case, overrides) => {
+    await expect(
+      provider(await sign(overrides)).exchange("code", transaction),
+    ).rejects.toMatchObject({ statusCode: 403, code: "identity_mismatch" });
+  });
+
+  it.each([
+    ["another audience", { audience: "other-client" }],
+    ["an expired token", { expiresAt: Math.floor(Date.now() / 1000) - 60 }],
+    ["a token signed by another key", { key: foreign.privateKey }],
+  ])("rejects %s before reading claims", async (_case, options) => {
+    await expect(
+      provider(await sign({}, options)).exchange("code", transaction),
+    ).rejects.toMatchObject({ statusCode: 401, code: "auth_failed" });
+  });
+});
+
 function response(body: unknown, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
     status,

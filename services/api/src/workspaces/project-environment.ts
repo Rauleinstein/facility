@@ -11,6 +11,7 @@ import type {
   GithubWorkspaceCredentials,
   WorkspaceRepository,
 } from "../github/workspace-credentials.js";
+import { isLocalAlias } from "../repositories/local.js";
 import { appendWorkspaceEvent } from "./events.js";
 import { isSafeGitBranch } from "./git-branch.js";
 import type {
@@ -31,8 +32,7 @@ const RepositoryName = z
   .min(3)
   .max(240)
   .transform((value, context) => {
-    const local = /^local:([A-Za-z0-9][A-Za-z0-9._-]{0,99})$/.exec(value);
-    if (local?.[1] && !/\.git$/i.test(local[1])) return `local:${local[1]}`;
+    if (value.startsWith("local:") && isLocalAlias(value.slice(6))) return value;
     const match =
       /^(?:https:\/\/)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(value);
     if (!match) {
@@ -91,7 +91,17 @@ export const ProjectManifestSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ repositories }) =>
+      new Set(
+        [repositories.primary, ...repositories.related].map((name) => name.startsWith("local:")),
+      ).size === 1,
+    {
+      path: ["repositories"],
+      message: "repositories must all be local:<alias> or all be GitHub repositories",
+    },
+  );
 
 export type ProjectManifest = z.infer<typeof ProjectManifestSchema> & {
   hash: string;
@@ -170,8 +180,16 @@ export function parseProjectManifest(source: string): ProjectManifest {
   };
 }
 
+/** Revisions already imported into a story workspace, keyed by project repository id. */
+export type PinnedRevisions = Record<string, { revision: string }>;
+
 export interface ProjectManifestSource {
-  load(orgId: string, projectId: string): Promise<ProjectManifest>;
+  /**
+   * `pinned` is the story workspace's imported source. A local source reads
+   * configuration at that commit, so a later host commit never changes a
+   * running story's setup, start, or check commands. GitHub sources ignore it.
+   */
+  load(orgId: string, projectId: string, pinned?: PinnedRevisions): Promise<ProjectManifest>;
 }
 
 export class GithubProjectManifestSource implements ProjectManifestSource {
@@ -736,9 +754,20 @@ export class ProjectEnvironmentService {
         previous: previous.revision,
         revision: snapshot.commit,
         defaultBranchUpdated: false,
+        diverged: false,
       };
     }
     await this.fetchLocalBundle(input, repository, cwd, snapshot.bundle);
+    // A rewritten host history must never rewind the workspace's default branch.
+    const diverged =
+      (
+        await this.runtime.exec(input.workspace, {
+          command: "git",
+          args: ["merge-base", "--is-ancestor", previous.revision, snapshot.commit],
+          cwd,
+          env: input.credentials.environment,
+        })
+      ).exitCode !== 0;
     const current = (
       await this.runtime.exec(input.workspace, {
         command: "git",
@@ -747,8 +776,9 @@ export class ProjectEnvironmentService {
         env: input.credentials.environment,
       })
     ).stdout.trim();
-    const updated =
-      current === repository.defaultBranch
+    const updated = diverged
+      ? { exitCode: 1 }
+      : current === repository.defaultBranch
         ? await this.runtime.exec(input.workspace, {
             command: "git",
             args: ["merge", "--ff-only", "--quiet", localSourceRef(repository)],
@@ -773,12 +803,14 @@ export class ProjectEnvironmentService {
       previous: previous.revision,
       revision: snapshot.commit,
       defaultBranchUpdated: updated.exitCode === 0,
+      diverged,
       warnings: snapshot.warnings,
     });
     return {
       previous: previous.revision,
       revision: snapshot.commit,
       defaultBranchUpdated: updated.exitCode === 0,
+      diverged,
     };
   }
 
