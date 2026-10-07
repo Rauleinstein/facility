@@ -5,7 +5,11 @@ export async function clientApi<T = unknown>(
   method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
   path: string,
   body?: unknown,
-): Promise<{ ok: true; data: T } | { ok: false; message: string }> {
+): Promise<
+  | { ok: true; data: T }
+  // `status` is absent when no response arrived, so the outcome is unknown.
+  | { ok: false; message: string; status?: number; code?: string }
+> {
   try {
     const idempotencyKey =
       body && typeof body === "object" && "idempotency_key" in body
@@ -20,12 +24,14 @@ export async function clientApi<T = unknown>(
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     const payload = (await res.json().catch(() => null)) as
-      | ({ error?: { message?: string } } & T)
+      | ({ error?: { code?: string; message?: string } } & T)
       | null;
     if (!res.ok) {
       return {
         ok: false,
         message: payload?.error?.message ?? `request failed (${res.status})`,
+        status: res.status,
+        code: payload?.error?.code,
       };
     }
     return { ok: true, data: payload as T };
