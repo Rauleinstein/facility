@@ -18,6 +18,7 @@ import { CostBudgetService } from "../insights/costs.js";
 import { workspaceSourceRevisions } from "../repositories/local-workspace.js";
 import type { RepositoryAccess } from "../repositories/sources.js";
 import type { StoryWorkspaceService } from "../stories/service.js";
+import { readWorkspaceLocator } from "../workspaces/locator.js";
 import type {
   ProjectEnvironmentService,
   ProjectManifestSource,
@@ -770,27 +771,9 @@ function numberValue(value: unknown) {
 }
 
 function workspaceLocator(row: typeof workspaces.$inferSelect): WorkspaceLocator {
-  const environment = row.environment as {
-    image?: unknown;
-    variables?: unknown;
-    ports?: WorkspaceLocator["ports"];
-    resources?: WorkspaceLocator["resources"];
-  };
-  if (!row.externalRef || typeof environment.image !== "string") {
-    throw new Error("workspace provider reference or image is missing");
-  }
-  return {
-    id: row.id,
-    image: environment.image,
-    environment:
-      environment.variables && typeof environment.variables === "object"
-        ? (environment.variables as Record<string, string>)
-        : {},
-    ports: Array.isArray(environment.ports) ? environment.ports : [],
-    resources: environment.resources,
-    externalRef: row.externalRef,
-    volumeRef: row.volumeRef,
-  };
+  const locator = readWorkspaceLocator(row);
+  if (!locator) throw new Error("workspace provider reference or image is missing");
+  return locator;
 }
 
 /** What the agent may do with the repository, by where the repository comes from. */

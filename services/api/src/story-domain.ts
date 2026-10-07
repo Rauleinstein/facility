@@ -17,11 +17,10 @@ import { LocalWorkspaceSource } from "./repositories/local-workspace.js";
 import {
   LocalAgentCatalogSource,
   LocalProjectManifestSource,
+  LocalRepositoryAccess,
   LocalRepositorySnapshots,
-  ProjectRepositoryAccess,
+  ProjectRepositorySources,
   type RepositoryAccess,
-  SourceAwareAgentCatalogSource,
-  SourceAwareProjectManifestSource,
 } from "./repositories/sources.js";
 import { ProjectBacklogService } from "./stories/backlog.js";
 import { StoryWorkspaceService } from "./stories/service.js";
@@ -101,25 +100,22 @@ export function createStoryDomain(input: {
       }),
   );
   // GitHub is one optional repository source. Local projects never mint GitHub credentials.
-  const catalog = new AgentCatalogService(
-    input.db,
-    new SourceAwareAgentCatalogSource(
-      input.db,
-      new GithubAgentCatalogSource(input.db, githubFactory),
-      new LocalAgentCatalogSource(localRepositories),
-    ),
-  );
-  const credentials = new ProjectRepositoryAccess(
-    input.db,
-    new GithubWorkspaceCredentialBroker(input.db, tokenFactory),
-    input.config.localGitIdentity,
-  );
+  const sources = new ProjectRepositorySources(input.db, {
+    github: {
+      access: new GithubWorkspaceCredentialBroker(input.db, tokenFactory),
+      manifests: new GithubProjectManifestSource(input.db, githubFactory),
+      catalog: new GithubAgentCatalogSource(input.db, githubFactory),
+    },
+    local: {
+      access: new LocalRepositoryAccess(input.db, input.config.localGitIdentity),
+      manifests: new LocalProjectManifestSource(localRepositories),
+      catalog: new LocalAgentCatalogSource(localRepositories),
+    },
+  });
+  const catalog = new AgentCatalogService(input.db, sources.catalog);
+  const credentials = sources.access;
   const costs = new CostBudgetService(input.db);
-  const projectManifests = new SourceAwareProjectManifestSource(
-    input.db,
-    new GithubProjectManifestSource(input.db, githubFactory),
-    new LocalProjectManifestSource(localRepositories),
-  );
+  const projectManifests = sources.manifests;
   const localWorkspace = new LocalWorkspaceSource(input.db, runtime, localRepositories);
   const variables = new WorkspaceVariablesService(input.db, input.config.secretMasterKey);
   const environment = new ProjectEnvironmentService(

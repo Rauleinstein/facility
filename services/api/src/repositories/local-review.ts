@@ -12,6 +12,7 @@ import {
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { appendStoryEvidence } from "../stories/evidence.js";
 import { parseGitLog, parseNameStatus } from "../turns/git-evidence.js";
+import { readWorkspaceLocator } from "../workspaces/locator.js";
 import {
   type ProjectEnvironmentService,
   type ProjectManifestSource,
@@ -721,22 +722,7 @@ function presentExport(row: ExportRow, defaultBranch: string) {
 }
 
 function workspaceLocator(row: typeof workspaces.$inferSelect): WorkspaceLocator {
-  const environment = row.environment as {
-    image?: string;
-    variables?: Record<string, string>;
-    ports?: WorkspaceLocator["ports"];
-    resources?: WorkspaceLocator["resources"];
-  };
-  if (!row.externalRef || typeof environment.image !== "string") {
-    throw new LocalReviewError("workspace_not_ready", "Workspace is not ready");
-  }
-  return {
-    id: row.id,
-    image: environment.image,
-    environment: environment.variables ?? {},
-    ports: Array.isArray(environment.ports) ? environment.ports : [],
-    resources: environment.resources,
-    externalRef: row.externalRef,
-    volumeRef: row.volumeRef,
-  };
+  const locator = readWorkspaceLocator(row);
+  if (!locator) throw new LocalReviewError("workspace_not_ready", "Workspace is not ready");
+  return locator;
 }
