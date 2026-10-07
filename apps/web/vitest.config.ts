@@ -7,4 +7,6 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   oxc: { jsx: { runtime: "automatic" } },
   resolve: { alias: { "@": resolve(import.meta.dirname, ".") } },
+  // e2e/ is Playwright's (`pnpm test:e2e-browser`), not vitest's.
+  test: { exclude: ["e2e/**", "node_modules/**"] },
 });

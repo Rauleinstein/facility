@@ -78,6 +78,32 @@ CI requires this tier for default-branch and release acceptance, and for pull
 requests that change workspace execution boundaries. A path-based skip is
 recorded only when those boundaries are untouched.
 
+## Browser E2E for the local workflow
+
+An opt-in Playwright test drives the local repository workflow through the UI:
+it signs in locally, registers a temporary repository, creates the kickstart
+branch, starts a story (including retrying a rejected start), waits for the
+agent turn, runs checks, approves, exports, and imports the bundle.
+
+```bash
+docker build -f runner/Dockerfile -t facility-runner:dev .
+pnpm test:e2e-browser
+```
+
+It starts its own API, worker, and UI on the `pnpm dev` ports, so stop a running
+`pnpm dev` first. It uses the `facility_e2e` database and repositories under a
+temporary directory, and the API and worker run with
+`FACILITY_TEST_ENGINE=scripted`: every agent turn commits a fixed change, no
+model is called, and no credentials are needed. Production refuses that setting.
+
+Every run records a video and leaves an HTML report in
+`apps/web/playwright-report` (`pnpm --filter @facility/web exec playwright show-report`);
+failures also keep a trace. Set `FACILITY_E2E_LOGS=1` to print the stack's logs.
+
+Run it when changing the local workflow pages, the story composer, review and
+export, or the local repository API. A real engine and a subscription login
+still need the manual check below.
+
 ## Critical security and money paths
 
 Authentication, authorization, tenant scoping, secrets, cryptography, billing,
