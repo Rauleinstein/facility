@@ -27,6 +27,7 @@ import type { JWTVerifyGetKey } from "jose";
 import PgBoss from "pg-boss";
 import { uuidv7 } from "uuidv7";
 import { z } from "zod";
+import { AgentCatalogError } from "./agents/catalog.js";
 import { registerAuthorizationServer } from "./auth/authorization-server.js";
 import { orgAdmitsMembers } from "./auth/org-admission.js";
 import { readConfig } from "./config.js";
@@ -47,6 +48,7 @@ import { registerV1Routes } from "./routes/v1.js";
 import { registerWebhookRoutes } from "./routes/webhooks.js";
 import { createStoryDomain, type StoryDomain } from "./story-domain.js";
 import type { AppConfig, Principal } from "./types.js";
+import { ProjectEnvironmentError } from "./workspaces/project-environment.js";
 
 const publicRoutes = new Set([
   "GET /health",
@@ -122,6 +124,22 @@ export async function buildApp(
     };
     if (error instanceof ApiError) {
       return sendError(reply, error);
+    }
+    // Domain refusals carry a stable code; command output in `details` stays private.
+    if (error instanceof ProjectEnvironmentError) {
+      return sendError(reply, new ApiError(409, error.code, error.message));
+    }
+    if (error instanceof AgentCatalogError) {
+      return sendError(
+        reply,
+        new ApiError(
+          error.statusCode,
+          error.code,
+          error.message,
+          undefined,
+          error.statusCode < 500 || error.code === "agent_catalog_unavailable",
+        ),
+      );
     }
     const databaseCode = err.code ?? err.cause?.code;
     if (databaseCode === "23505") {

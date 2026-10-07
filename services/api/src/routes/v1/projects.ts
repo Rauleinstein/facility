@@ -6,6 +6,7 @@ import { z } from "zod";
 import { ApiError, notFound } from "../../errors.js";
 import { createGithubClientFactory } from "../../github/client.js";
 import { removeRepositoryConnection } from "../../github/repository-connections.js";
+import { assertProjectSource } from "../../repositories/sources.js";
 import { projectNativePreviewsEnabled } from "../../workspaces/project-native-previews.js";
 import {
   AnyObject,
@@ -305,13 +306,7 @@ export async function registerProjectRoutes(app: FastifyInstance, context: V1Rou
           .where(
             and(eq(projectRepositories.orgId, actor.orgId), eq(projectRepositories.projectId, id)),
           );
-        if (existing.some((repository) => repository.source !== "github")) {
-          throw new ApiError(
-            409,
-            "repository_sources_mixed",
-            "This project uses local repositories; create a separate project for GitHub repositories",
-          );
-        }
+        assertProjectSource(existing, "github");
         const primary = existing.find((repository) => repository.role === "primary");
         const row = (
           await tx

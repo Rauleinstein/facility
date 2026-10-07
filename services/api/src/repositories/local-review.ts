@@ -9,6 +9,7 @@ import {
   workspaces,
 } from "@facility/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { ApiError } from "../errors.js";
 import { appendStoryEvidence } from "../stories/evidence.js";
 import { parseGitLog, parseNameStatus } from "../turns/git-evidence.js";
 import { readWorkspaceLocator } from "../workspaces/locator.js";
@@ -37,13 +38,10 @@ const MAX_EXPORT_BYTES = 256 * 1024 * 1024;
 
 export type ReviewActor = { type: "user" | "service" | "system"; id: string };
 
-export class LocalReviewError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly statusCode = 409,
-  ) {
-    super(message);
+/** An API error whose code and message are part of the local review contract. */
+export class LocalReviewError extends ApiError {
+  constructor(code: string, message: string, statusCode = 409) {
+    super(statusCode, code, message, undefined, true);
     this.name = "LocalReviewError";
   }
 }

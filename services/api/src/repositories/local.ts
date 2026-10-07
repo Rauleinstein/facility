@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize, relative, sep } from "node:path";
+import { ApiError } from "../errors.js";
 import { isSafeGitBranch } from "../workspaces/git-branch.js";
 
 /** Local repository access is disabled until an operator approves at least one root. */
@@ -39,13 +40,10 @@ export type LocalSource = { sourcePath: string; sourceRepository: string };
 
 export type LocalTreeEntry = { mode: string; type: string; oid: string; path: string };
 
-export class LocalRepositoryError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly statusCode = 400,
-  ) {
-    super(message);
+/** An API error whose code and message are part of the local repository contract. */
+export class LocalRepositoryError extends ApiError {
+  constructor(code: string, message: string, statusCode = 400) {
+    super(statusCode, code, message, undefined, true);
     this.name = "LocalRepositoryError";
   }
 }

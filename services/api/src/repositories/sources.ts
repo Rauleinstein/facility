@@ -6,6 +6,7 @@ import {
   type AgentCatalogSource,
 } from "../agents/catalog.js";
 import { isAgentManifestPath, isProjectSkillPath } from "../agents/catalog-files.js";
+import { ApiError } from "../errors.js";
 import type { GithubGitIdentity } from "../github/git-identity.js";
 import type {
   RepositorySource,
@@ -64,6 +65,21 @@ export function projectSource(rows: Array<Pick<ProjectRepositoryRow, "role" | "s
     );
   }
   return (rows.find((row) => row.role === "primary")?.source ?? "github") as RepositorySource;
+}
+
+/** Refuses to add a `source` repository to a project whose repositories use the other source. */
+export function assertProjectSource(
+  existing: Array<Pick<ProjectRepositoryRow, "source">>,
+  source: RepositorySource,
+) {
+  if (existing.some((repository) => repository.source !== source)) {
+    const [uses, adding] = source === "local" ? ["GitHub", "local"] : ["local", "GitHub"];
+    throw new ApiError(
+      409,
+      "repository_sources_mixed",
+      `This project uses ${uses} repositories; create a separate project for ${adding} repositories`,
+    );
+  }
 }
 
 export async function loadProjectSource(db: FacilityDb, orgId: string, projectId: string) {
