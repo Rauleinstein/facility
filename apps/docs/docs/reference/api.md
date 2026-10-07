@@ -75,10 +75,13 @@ another project receives 404 rather than a distinguishable authorization error.
   (`workspaces:execute`); and `exports/:exportId/bundle` and `exports/:exportId/patch`
   (`stories:read`).
 
-Approval names one commit: `review_commit_mismatch` rejects any other, `uncommitted_changes`
-rejects a dirty workspace, and exporting requires an approval of the current head
-(`approval_required`, `approval_stale`). Review actions return `turn_active` while a turn is
-queued or running. A local registered path that later resolves elsewhere returns
+Every review route answers with the review state; `refresh-source` adds `refresh` and `exports`
+adds `export`. The state lists `blockers`, and approving or exporting refuses with the first one
+that applies: `story_branch_not_checked_out`, `uncommitted_changes`, `no_changes`, then, for
+exports, `approval_required` (`approval_stale` when the approved commit is no longer the head).
+Approval names one commit and `review_commit_mismatch` rejects any other. Changes requested on an
+earlier commit leave a new head awaiting review. Review actions return `turn_active` while a turn
+is queued or running. A local registered path that later resolves elsewhere returns
 `local_repository_path_changed` or `local_repository_outside_roots` on every use.
 
 ### Disconnect a repository

@@ -146,7 +146,11 @@ export async function registerAuthorizationServer(app: FastifyInstance, config: 
 
   app.get(
     "/oauth/interaction/:uid",
-    { config: { public: true }, schema: { params: z.object({ uid: z.string() }) } },
+    {
+      config: { public: true },
+      // The OIDC provider's browser interaction, not part of the public API.
+      schema: { hide: true, params: z.object({ uid: z.string() }) },
+    },
     async (request, reply) => {
       if (!request.principal?.userId) {
         const returnTo = `/oauth/interaction/${(request.params as { uid: string }).uid}`;
@@ -168,6 +172,7 @@ export async function registerAuthorizationServer(app: FastifyInstance, config: 
     {
       config: { public: true },
       schema: {
+        hide: true,
         params: z.object({ uid: z.string() }),
         body: z.object({ confirm: z.literal("yes") }),
       },

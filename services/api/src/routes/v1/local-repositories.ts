@@ -8,7 +8,7 @@ import { COMMIT_SHA } from "../../repositories/local.js";
 import { createLocalKickstartBranch, localKickstart } from "../../repositories/local-kickstart.js";
 import type { ReviewActor } from "../../repositories/local-review.js";
 import { registerLocalRepository } from "../../repositories/registration.js";
-import { principal, type V1RouteContext } from "./shared.js";
+import { DateValue, principal, type V1RouteContext } from "./shared.js";
 
 const ProjectParams = z.object({ projectId: z.string() });
 const RepositoryParams = z.object({ projectId: z.string(), repoId: z.string() });
@@ -41,6 +41,80 @@ const KickstartAnswers = z.object({
     .strict()
     .optional(),
 });
+
+const ReviewActorSchema = z.object({
+  type: z.enum(["user", "service", "system"]),
+  id: z.string(),
+});
+
+const LocalExportSchema = z.object({
+  id: z.string(),
+  branch: z.string(),
+  baseSha: z.string(),
+  headSha: z.string(),
+  commitCount: z.number().int(),
+  bundleSha256: z.string(),
+  createdBy: ReviewActorSchema,
+  createdAt: DateValue,
+  /** Branch the import instructions create in the user's repository. */
+  reviewBranch: z.string(),
+  instructions: z.array(z.string()),
+  patchInstructions: z.array(z.string()),
+});
+
+/** Every local review endpoint answers with this state; mutations add their own result. */
+const LocalReviewStateSchema = z.object({
+  repository: z.object({ id: z.string(), name: z.string(), defaultBranch: z.string() }),
+  branch: z.string(),
+  currentBranch: z.string(),
+  headSha: z.string(),
+  baseSha: z.string(),
+  sourceRevision: z.string(),
+  initialSourceRevision: z.string(),
+  sourceImportedAt: z.string(),
+  dirty: z.boolean(),
+  uncommitted: z.array(z.object({ status: z.string(), path: z.string() })),
+  commits: z.array(
+    z.object({ sha: z.string(), author: z.string(), authoredAt: z.string(), subject: z.string() }),
+  ),
+  changedFiles: z.array(
+    z.object({ status: z.string(), path: z.string(), previousPath: z.string().optional() }),
+  ),
+  approval: z.object({
+    status: z.enum(["none", "approved", "stale", "changes_requested"]),
+    commitSha: z.string().nullable(),
+    note: z.string().nullable(),
+    reviewer: ReviewActorSchema.nullable(),
+    reviewedAt: DateValue.nullable(),
+    eventId: z.string().nullable(),
+  }),
+  checks: z.array(
+    z.object({
+      name: z.string(),
+      command: z.string(),
+      commitSha: z.string(),
+      exitCode: z.number(),
+      durationMs: z.number(),
+      stdout: z.string(),
+      stderr: z.string(),
+      dirty: z.boolean(),
+      commitChanged: z.boolean(),
+      recordedAt: DateValue,
+    }),
+  ),
+  exports: z.array(LocalExportSchema),
+  exportable: z.boolean(),
+  blockers: z.array(
+    z.enum([
+      "story_branch_not_checked_out",
+      "uncommitted_changes",
+      "no_changes",
+      "approval_required",
+    ]),
+  ),
+});
+
+const LocalReviewResponse = { 200: LocalReviewStateSchema };
 
 export async function registerLocalRepositoryRoutes(app: FastifyInstance, context: V1RouteContext) {
   const { db } = context;
@@ -144,7 +218,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
     reviewBase,
     {
       config: { permission: "stories:read" },
-      schema: { params: StoryParams, operationId: "getLocalReview" },
+      schema: { params: StoryParams, response: LocalReviewResponse, operationId: "getLocalReview" },
     },
     async (request, reply) => {
       const actor = principal(request);
@@ -164,6 +238,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       schema: {
         params: StoryParams,
         body: z.object({ commit_sha: Sha, note: z.string().max(4_000).optional() }),
+        response: LocalReviewResponse,
         operationId: "approveLocalReview",
       },
     },
@@ -186,6 +261,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       schema: {
         params: StoryParams,
         body: z.object({ commit_sha: Sha.optional(), note: z.string().trim().min(1).max(4_000) }),
+        response: LocalReviewResponse,
         operationId: "requestLocalReviewChanges",
       },
     },
@@ -207,6 +283,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       config: { permission: "workspaces:execute", auditAction: "story.local_checks.run" },
       schema: {
         params: StoryParams,
+        response: LocalReviewResponse,
         operationId: "runLocalReviewChecks",
       },
     },
@@ -224,6 +301,16 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       schema: {
         params: StoryParams,
         body: z.object({ repository_id: z.string().min(1).max(200).optional() }).default({}),
+        response: {
+          200: LocalReviewStateSchema.extend({
+            refresh: z.object({
+              previous: z.string(),
+              revision: z.string(),
+              defaultBranchUpdated: z.boolean(),
+              diverged: z.boolean(),
+            }),
+          }),
+        },
         operationId: "refreshLocalReviewSource",
       },
     },
@@ -246,6 +333,7 @@ export async function registerLocalRepositoryRoutes(app: FastifyInstance, contex
       config: { permission: "workspaces:execute", auditAction: "story.local_export.created" },
       schema: {
         params: StoryParams,
+        response: { 200: LocalReviewStateSchema.extend({ export: LocalExportSchema }) },
         operationId: "createLocalReviewExport",
       },
     },
