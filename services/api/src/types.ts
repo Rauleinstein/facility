@@ -57,6 +57,8 @@ export type AppConfig = {
   oauthJwks?: { keys: Record<string, unknown>[] };
   mcpPublicUrl?: string;
   facilityInsecureDev: boolean;
+  /** Browser end-to-end tests only; refused in production. */
+  testEngine?: "scripted";
   vercelToken?: string;
   vercelTeamId?: string;
   vercelProjectId?: string;

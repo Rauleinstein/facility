@@ -216,6 +216,45 @@ export class CodexEngine extends CliAgentEngine {
   }
 }
 
+/**
+ * A deterministic stand-in for both engines, for browser end-to-end tests
+ * (`FACILITY_TEST_ENGINE=scripted`, refused in production). Each turn appends
+ * its turn id to `facility-e2e.txt` and commits it; no model is called.
+ */
+export class ScriptedEngine implements AgentEngine {
+  constructor(
+    readonly name: "claude_code" | "codex",
+    private readonly runtime: WorkspaceRuntime,
+  ) {}
+
+  async run(request: AgentTurnRequest): Promise<AgentTurnResult> {
+    const result = await this.runtime.exec(request.workspace, {
+      command: "sh",
+      args: [
+        "-c",
+        'printf "%s\\n" "$FACILITY_SCRIPTED_TURN" >> facility-e2e.txt && git add facility-e2e.txt && git commit -q -m "feat: scripted change"',
+      ],
+      cwd: request.cwd,
+      env: { FACILITY_SCRIPTED_TURN: request.turnId },
+      timeoutMs: request.timeoutMs,
+    });
+    if (result.exitCode !== 0) {
+      throw new AgentEngineError("scripted_engine_failed", "scripted engine command failed", {
+        stderr: result.stderr,
+      });
+    }
+    return {
+      nativeSessionId: `scripted-${request.turnId}`,
+      output: "Scripted change committed to facility-e2e.txt.",
+      progress: [],
+      events: [],
+      exitCode: 0,
+      stderr: "",
+      durationMs: result.durationMs,
+    };
+  }
+}
+
 export class AgentEngineRegistry {
   private readonly engines: Map<string, AgentEngine>;
 
