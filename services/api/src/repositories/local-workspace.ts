@@ -1,14 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { type FacilityDb, workspaces } from "@facility/db";
 import { and, eq, sql } from "drizzle-orm";
-import type { WorkspaceRepository } from "../github/workspace-credentials.js";
+import type { WorkspaceRepository } from "../workspaces/credentials.js";
 import { appendWorkspaceEvent } from "../workspaces/events.js";
-import {
-  ProjectEnvironmentError,
-  repositoryPath,
-  type WorkspaceGit,
-  type WorkspaceRepositorySource,
-} from "../workspaces/project-environment.js";
+import { ProjectEnvironmentError, repositoryPath } from "../workspaces/project-environment.js";
+import type { WorkspaceGit, WorkspaceRepositorySource } from "../workspaces/repository-sources.js";
 import type { WorkspaceRuntime } from "../workspaces/runtime.js";
 
 /** Packages committed local history for import into a workspace. */
@@ -67,6 +63,16 @@ export class LocalWorkspaceSource implements WorkspaceRepositorySource {
   /** A local story branch starts at the imported source commit and is never reset. */
   async storyBranchStart(_git: WorkspaceGit, repository: WorkspaceRepository) {
     return [localSourceRef(repository)];
+  }
+
+  /** Exactly which host commits and configuration a turn ran against. */
+  async turnEvidence(git: WorkspaceGit) {
+    return {
+      source: "local",
+      projectManifestHash: git.manifest.hash,
+      configurationRevision: git.manifest.sourceRevision ?? null,
+      sourceRevisions: await workspaceSourceRevisions(this.db, git.orgId, git.workspace.id),
+    };
   }
 
   /**

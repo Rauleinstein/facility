@@ -13,11 +13,10 @@ import {
 import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { type AgentCatalogService, manifestFromProjection } from "../agents/catalog.js";
 import { githubRateLimitRetryAt } from "../github/rate-limit.js";
-import type { WorkspaceRepository } from "../github/workspace-credentials.js";
 import { CostBudgetService } from "../insights/costs.js";
-import { workspaceSourceRevisions } from "../repositories/local-workspace.js";
 import type { RepositoryAccess } from "../repositories/sources.js";
 import type { StoryWorkspaceService } from "../stories/service.js";
+import type { RepositorySource } from "../workspaces/credentials.js";
 import { readWorkspaceLocator } from "../workspaces/locator.js";
 import type {
   ProjectEnvironmentService,
@@ -220,21 +219,11 @@ export class TurnDispatcher {
         previousSetupChecksum: workspace.setupChecksum,
       });
       secrets = credentialSecrets(prepared.processEnvironment, prepared.secretNames);
-      // A project's repositories share one source.
-      const source = credential.repositories.some((repository) => repository.source === "local")
-        ? "local"
-        : "github";
-      if (source === "local") {
-        // Evidence of exactly which host commit and configuration this turn ran against.
+      if (prepared.sourceEvidence) {
         await appendTurnEvent(this.db, {
           ...eventBase,
           type: "turn.source",
-          data: {
-            source: "local",
-            projectManifestHash: projectManifest.hash,
-            configurationRevision: projectManifest.sourceRevision ?? null,
-            sourceRevisions: await workspaceSourceRevisions(this.db, input.orgId, workspace.id),
-          },
+          data: prepared.sourceEvidence,
         });
       }
       const session = (
@@ -323,7 +312,14 @@ export class TurnDispatcher {
         turnId: turn.id,
         manifest,
         workspace: workspaceLocator(workspace),
-        prompt: buildPrompt(manifest, story, conversation.summary, messages, turn.id, source),
+        prompt: buildPrompt(
+          manifest,
+          story,
+          conversation.summary,
+          messages,
+          turn.id,
+          credential.source,
+        ),
         cwd: prepared.primaryCwd,
         nativeSessionId: session?.nativeSessionId,
         environment: prepared.processEnvironment,
@@ -777,7 +773,7 @@ function workspaceLocator(row: typeof workspaces.$inferSelect): WorkspaceLocator
 }
 
 /** What the agent may do with the repository, by where the repository comes from. */
-const SOURCE_INSTRUCTIONS: Record<WorkspaceRepository["source"], string> = {
+const SOURCE_INSTRUCTIONS: Record<RepositorySource, string> = {
   github:
     "Continue in the existing worktree. You have full workspace, network, Docker, browser, git, and GitHub maintainer access. Preserve useful uncommitted work. Commit and push coherent changes when the task calls for it. Never merge the pull request or publish packages.",
   local:
@@ -790,7 +786,7 @@ function buildPrompt(
   summary: string | null,
   messages: Array<typeof storyMessages.$inferSelect>,
   turnId: string,
-  source: WorkspaceRepository["source"],
+  source: RepositorySource,
 ) {
   const currentSequence = messages.find(
     (message) => message.turnId === turnId && message.role === "user",

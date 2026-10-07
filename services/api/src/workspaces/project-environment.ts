@@ -7,13 +7,15 @@ import { parseDocument } from "yaml";
 import { z } from "zod";
 import { FacilityGithubClient, type GithubClientFactory } from "../github/client.js";
 import { decodeContent } from "../github/repo-files.js";
-import type {
-  GithubWorkspaceCredentials,
-  WorkspaceRepository,
-} from "../github/workspace-credentials.js";
 import { isLocalAlias } from "../repositories/local.js";
+import type { RepositorySource, WorkspaceCredentials, WorkspaceRepository } from "./credentials.js";
 import { appendWorkspaceEvent } from "./events.js";
 import { isSafeGitBranch } from "./git-branch.js";
+import {
+  GithubWorkspaceSource,
+  type WorkspaceGit,
+  type WorkspaceRepositorySource,
+} from "./repository-sources.js";
 import type {
   CreateWorkspace,
   PreviewEndpoint,
@@ -246,95 +248,17 @@ export class GithubProjectManifestSource implements ProjectManifestSource {
   }
 }
 
-/** Commands bound to one workspace preparation, for repository sources. */
-export type WorkspaceGit = {
-  orgId: string;
-  projectId: string;
-  workspace: WorkspaceLocator;
-  manifest: ProjectManifest;
-  repositories: WorkspaceRepository[];
-  /** Runs a command and throws an environment failure, with redacted output, if it fails. */
-  run(
-    command: string,
-    args: string[],
-    cwd: string,
-    phase: string,
-    stdin?: string,
-  ): Promise<WorkspaceCommandResult>;
-  /** Runs a command and returns its result whatever the exit code. */
-  probe(command: string, args: string[], cwd?: string): Promise<WorkspaceCommandResult>;
-};
-
-/** How a repository's history gets into a workspace and where story branches start. */
-export interface WorkspaceRepositorySource {
-  /** Brings the repository at `cwd` up to date; `present` says a Git directory exists there. */
-  materialize(
-    git: WorkspaceGit,
-    repository: WorkspaceRepository,
-    cwd: string,
-    present: boolean,
-  ): Promise<void>;
-  /** `git switch -c <branch>` arguments after the branch name, for a new story branch. */
-  storyBranchStart(
-    git: WorkspaceGit,
-    repository: WorkspaceRepository,
-    cwd: string,
-    branch: string,
-  ): Promise<string[]>;
-}
-
-/** A GitHub repository: cloned once, fetched before every turn, branches tracked from origin. */
-class GithubWorkspaceSource implements WorkspaceRepositorySource {
-  constructor(private readonly gitBaseUrl: string) {}
-
-  async materialize(
-    git: WorkspaceGit,
-    repository: WorkspaceRepository,
-    cwd: string,
-    present: boolean,
-  ) {
-    if (!present) {
-      await git.run(
-        "git",
-        ["clone", `${this.gitBaseUrl}/${repository.owner}/${repository.name}.git`, cwd],
-        ".",
-        `clone ${repository.owner}/${repository.name}`,
-      );
-    }
-    await git.run("git", ["fetch", "--all", "--prune"], cwd, "git fetch");
-  }
-
-  async storyBranchStart(
-    git: WorkspaceGit,
-    repository: WorkspaceRepository,
-    cwd: string,
-    branch: string,
-  ) {
-    const remote = await git.probe(
-      "git",
-      ["show-ref", "--verify", `refs/remotes/origin/${branch}`],
-      cwd,
-    );
-    return remote.exitCode === 0
-      ? ["--track", `origin/${branch}`]
-      : [`origin/${repository.defaultBranch}`];
-  }
-}
-
 type EnvironmentInput = {
   orgId: string;
   projectId: string;
   workspace: WorkspaceLocator;
   manifest: ProjectManifest;
-  credentials: GithubWorkspaceCredentials;
+  credentials: WorkspaceCredentials;
   readinessTimeoutMs?: number;
 };
 
 export class ProjectEnvironmentService {
-  private readonly sources: Record<
-    WorkspaceRepository["source"],
-    WorkspaceRepositorySource | undefined
-  >;
+  private readonly sources: Record<RepositorySource, WorkspaceRepositorySource | undefined>;
 
   constructor(
     private readonly db: FacilityDb,
@@ -375,7 +299,12 @@ export class ProjectEnvironmentService {
       );
       const cwd = repositoryPath(repository);
       const present = await git.probe("git", ["-C", cwd, "rev-parse", "--git-dir"]);
-      await this.source(repository).materialize(git, repository, cwd, present.exitCode === 0);
+      await this.source(repository.source).materialize(
+        git,
+        repository,
+        cwd,
+        present.exitCode === 0,
+      );
       await this.runCommand(
         preparedInput,
         "git",
@@ -424,7 +353,10 @@ export class ProjectEnvironmentService {
           ),
         );
     }
-    return this.startServices(preparedInput, setupChecksum);
+    return {
+      ...(await this.startServices(preparedInput, setupChecksum)),
+      sourceEvidence: await this.source(preparedInput.credentials.source).turnEvidence(git),
+    };
   }
 
   /** Reuse the agent's files and data; preview access must never prepare Git or reseed. */
@@ -516,7 +448,7 @@ export class ProjectEnvironmentService {
     turnId?: string;
     workspace: WorkspaceLocator;
     manifest: ProjectManifest;
-    credentials: GithubWorkspaceCredentials;
+    credentials: WorkspaceCredentials;
   }) {
     const script = input.manifest.environment.browser_test;
     if (!script) {
@@ -594,7 +526,7 @@ export class ProjectEnvironmentService {
       projectId: string;
       workspace: WorkspaceLocator;
       manifest: ProjectManifest;
-      credentials: GithubWorkspaceCredentials;
+      credentials: WorkspaceCredentials;
     },
   >(input: T): Promise<T> {
     const managed = await this.workspaceValues({
@@ -690,15 +622,20 @@ export class ProjectEnvironmentService {
             "switch",
             "-c",
             input.branch,
-            ...(await this.source(repository).storyBranchStart(git, repository, cwd, input.branch)),
+            ...(await this.source(repository.source).storyBranchStart(
+              git,
+              repository,
+              cwd,
+              input.branch,
+            )),
           ],
       cwd,
       "git branch",
     );
   }
 
-  private source(repository: WorkspaceRepository) {
-    const source = this.sources[repository.source];
+  private source(name: RepositorySource) {
+    const source = this.sources[name];
     if (!source) {
       throw new ProjectEnvironmentError(
         "local_repositories_disabled",
@@ -885,7 +822,7 @@ export function repositoryPath(repository: Pick<WorkspaceRepository, "owner" | "
   return `repos/${repository.owner}/${repository.name}`;
 }
 
-export function primaryPath(credentials: GithubWorkspaceCredentials) {
+export function primaryPath(credentials: WorkspaceCredentials) {
   const primary = credentials.repositories.find((repository) => repository.role === "primary");
   if (!primary) {
     throw new ProjectEnvironmentError(

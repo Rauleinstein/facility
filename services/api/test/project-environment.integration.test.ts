@@ -19,11 +19,9 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type {
-  GithubWorkspaceCredentialBroker,
-  GithubWorkspaceCredentials,
-} from "../src/github/workspace-credentials.js";
+import type { GithubWorkspaceCredentialBroker } from "../src/github/workspace-credentials.js";
 import type { AppConfig } from "../src/types.js";
+import type { WorkspaceCredentials } from "../src/workspaces/credentials.js";
 import { FakeWorkspaceRuntime } from "../src/workspaces/fake.js";
 import { WorkspacePreviewService } from "../src/workspaces/preview.js";
 import {
@@ -89,7 +87,8 @@ environment:
       websocket: true
 `);
 
-  const credentials: GithubWorkspaceCredentials = {
+  const credentials: WorkspaceCredentials = {
+    source: "github" as const,
     gitIdentity: { name: "my-app[bot]", email: "12345+my-app[bot]@users.noreply.github.com" },
     repositories: [
       {
@@ -648,7 +647,7 @@ environment:
 
   it("supports ordinary maintainer Git and GitHub operations with deterministic fakes", async () => {
     const token = "fixture-full-maintainer-token";
-    const maintainerCredentials: GithubWorkspaceCredentials = {
+    const maintainerCredentials: WorkspaceCredentials = {
       ...credentials,
       environment: {
         GH_TOKEN: token,
@@ -788,7 +787,7 @@ environment:
 
   it("redacts full-access GitHub credentials from environment events and errors", async () => {
     const secret = "github-installation-token-that-must-never-be-stored";
-    const protectedCredentials: GithubWorkspaceCredentials = {
+    const protectedCredentials: WorkspaceCredentials = {
       ...credentials,
       environment: {
         GH_TOKEN: secret,

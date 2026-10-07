@@ -1,25 +1,7 @@
 import { type FacilityDb, githubInstallations, projectRepositories } from "@facility/db";
 import { and, asc, eq, inArray } from "drizzle-orm";
+import type { WorkspaceCredentials } from "../workspaces/credentials.js";
 import type { GithubMaintainerTokenFactory } from "./client.js";
-import type { GithubGitIdentity } from "./git-identity.js";
-
-export type WorkspaceRepository = {
-  /** Project repository id. */
-  id: string;
-  source: "github" | "local";
-  owner: string;
-  name: string;
-  defaultBranch: string;
-  role: "primary" | "related";
-};
-
-/** Repository access for one workspace preparation; local sources carry no credentials. */
-export type GithubWorkspaceCredentials = {
-  repositories: WorkspaceRepository[];
-  environment: Record<string, string>;
-  expiresAt: Date;
-  gitIdentity: GithubGitIdentity;
-};
 
 export class GithubWorkspaceCredentialError extends Error {
   constructor(
@@ -37,7 +19,7 @@ export class GithubWorkspaceCredentialBroker {
     private readonly tokenFactory: GithubMaintainerTokenFactory,
   ) {}
 
-  async issue(orgId: string, projectId: string): Promise<GithubWorkspaceCredentials> {
+  async issue(orgId: string, projectId: string): Promise<WorkspaceCredentials> {
     const repositories = await this.db
       .select()
       .from(projectRepositories)
@@ -143,6 +125,7 @@ export class GithubWorkspaceCredentialBroker {
       );
     }
     return {
+      source: "github",
       gitIdentity: primaryCredential.gitIdentity,
       repositories: repositories.map((repository) => ({
         id: repository.id,

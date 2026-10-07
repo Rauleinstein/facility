@@ -152,6 +152,7 @@ environment:
           repositories: [],
           environment: { GH_TOKEN: "token" },
           expiresAt: new Date(),
+          source: "github" as const,
           gitIdentity: { name: "bot", email: "bot@example.com" },
         };
       },

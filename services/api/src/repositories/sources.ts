@@ -8,9 +8,10 @@ import {
 import { isAgentManifestPath, isProjectSkillPath } from "../agents/catalog-files.js";
 import type { GithubGitIdentity } from "../github/git-identity.js";
 import type {
-  GithubWorkspaceCredentials,
+  RepositorySource,
+  WorkspaceCredentials,
   WorkspaceRepository,
-} from "../github/workspace-credentials.js";
+} from "../workspaces/credentials.js";
 import {
   type PinnedRevisions,
   ProjectEnvironmentError,
@@ -25,9 +26,8 @@ import {
 } from "./local.js";
 import type { LocalSnapshotProvider } from "./local-workspace.js";
 
+export type { RepositorySource };
 export { DEFAULT_LOCAL_GIT_IDENTITY };
-
-export type RepositorySource = "github" | "local";
 export type ProjectRepositoryRow = typeof projectRepositories.$inferSelect;
 
 /** Local repositories share one owner sentinel that GitHub logins cannot use. */
@@ -35,7 +35,7 @@ export const LOCAL_REPOSITORY_OWNER = "_local";
 
 /** Repository access that a workspace needs before preparation. */
 export interface RepositoryAccess {
-  issue(orgId: string, projectId: string): Promise<GithubWorkspaceCredentials>;
+  issue(orgId: string, projectId: string): Promise<WorkspaceCredentials>;
 }
 
 export async function projectRepositoryRows(db: FacilityDb, orgId: string, projectId: string) {
@@ -122,7 +122,7 @@ export class LocalRepositoryAccess implements RepositoryAccess {
     private readonly identity: GithubGitIdentity = DEFAULT_LOCAL_GIT_IDENTITY,
   ) {}
 
-  async issue(orgId: string, projectId: string): Promise<GithubWorkspaceCredentials> {
+  async issue(orgId: string, projectId: string): Promise<WorkspaceCredentials> {
     const rows = await projectRepositoryRows(this.db, orgId, projectId);
     if (!rows.some((row) => row.role === "primary")) {
       throw new ProjectEnvironmentError(
@@ -131,6 +131,7 @@ export class LocalRepositoryAccess implements RepositoryAccess {
       );
     }
     return {
+      source: "local",
       repositories: rows.map(
         (row): WorkspaceRepository => ({
           id: row.id,

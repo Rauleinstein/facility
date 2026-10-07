@@ -21,6 +21,7 @@ environment:
       port: 3000
 `);
 const credentials = {
+  source: "github" as const,
   gitIdentity: { name: "my-app[bot]", email: "12345+my-app[bot]@users.noreply.github.com" },
   repositories: [
     {

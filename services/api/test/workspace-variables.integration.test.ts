@@ -282,6 +282,7 @@ describe("workspace variables: authenticated API, encryption, and process delive
       workspace,
       manifest,
       credentials: {
+        source: "github" as const,
         gitIdentity: { name: "bot", email: "bot@example.com" },
         repositories: [
           {
