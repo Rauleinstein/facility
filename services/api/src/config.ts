@@ -88,6 +88,8 @@ const EnvSchema = z
     FACILITY_OAUTH_JWKS: z.string().optional(),
     MCP_PUBLIC_URL: OptionalUrl,
     FACILITY_INSECURE_DEV: z.string().optional(),
+    /** Browser end-to-end tests only: replace both agent engines with `ScriptedEngine`. */
+    FACILITY_TEST_ENGINE: z.enum(["scripted"]).optional(),
     VERCEL_TOKEN: OptionalNonEmpty,
     VERCEL_OIDC_TOKEN: OptionalNonEmpty,
     VERCEL_TEAM_ID: OptionalNonEmpty,
@@ -140,6 +142,13 @@ const EnvSchema = z
         code: "custom",
         path: ["FACILITY_INSECURE_DEV"],
         message: "FACILITY_INSECURE_DEV is refused in production",
+      });
+    }
+    if (env.NODE_ENV === "production" && env.FACILITY_TEST_ENGINE) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["FACILITY_TEST_ENGINE"],
+        message: "FACILITY_TEST_ENGINE is refused in production",
       });
     }
     if (
@@ -349,6 +358,7 @@ export function readConfig(env = process.env): AppConfig {
       ? canonicalMcpResourceUrl(parsed.MCP_PUBLIC_URL)
       : undefined,
     facilityInsecureDev: parsed.FACILITY_INSECURE_DEV === "1",
+    testEngine: parsed.FACILITY_TEST_ENGINE,
     vercelToken: parsed.VERCEL_OIDC_TOKEN ?? parsed.VERCEL_TOKEN,
     vercelTeamId: parsed.VERCEL_TEAM_ID,
     vercelProjectId: parsed.VERCEL_PROJECT_ID,

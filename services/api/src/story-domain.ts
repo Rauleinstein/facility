@@ -31,6 +31,7 @@ import {
   AgentEngineRegistry,
   ClaudeCodeEngine,
   CodexEngine,
+  ScriptedEngine,
 } from "./turns/engines.js";
 import { TurnGitEvidenceService } from "./turns/git-evidence.js";
 import type { AppConfig } from "./types.js";
@@ -144,7 +145,10 @@ export function createStoryDomain(input: {
   });
   const mirror = new GithubMirrorService(input.db, githubFactory, stories);
   const engines = new AgentEngineRegistry(
-    input.engines ?? [new ClaudeCodeEngine(runtime), new CodexEngine(runtime)],
+    input.engines ??
+      (input.config.testEngine === "scripted"
+        ? [new ScriptedEngine("claude_code", runtime), new ScriptedEngine("codex", runtime)]
+        : [new ClaudeCodeEngine(runtime), new CodexEngine(runtime)]),
   );
   const evidence = new TurnGitEvidenceService(input.db, runtime);
   const titles = new StoryTitleService(input.db, {

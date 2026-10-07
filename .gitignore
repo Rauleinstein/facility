@@ -24,3 +24,7 @@ dist/
 *.tfstate
 *.tfstate.*
 crash.log
+
+# Playwright (pnpm test:e2e-browser)
+test-results/
+playwright-report/
