@@ -14,8 +14,9 @@ import {
   workspaces,
 } from "@facility/db";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { localReviewSummaries } from "../repositories/local-review.js";
+import { localReviewSummaries } from "../repositories/local-review-backlog.js";
 import type { LocalReviewSummary } from "../repositories/local-review-rules.js";
+import { projectSource } from "../repositories/sources.js";
 import {
   derivePhase,
   type PhaseReason,
@@ -232,6 +233,7 @@ export class ProjectBacklogService {
           owner: projectRepositories.owner,
           name: projectRepositories.name,
           source: projectRepositories.source,
+          role: projectRepositories.role,
         })
         .from(projectRepositories)
         .where(
@@ -433,9 +435,10 @@ export class ProjectBacklogService {
         workspaceByStory.set(workspace.storyId, workspace);
       }
     }
-    const localReviewByStory = repositoryRows.some((repository) => repository.source === "local")
-      ? await localReviewSummaries(this.db, orgId, projectId, workspaceByStory)
-      : new Map<string, LocalReviewSummary | null>();
+    const localReviewByStory =
+      projectSource(repositoryRows) === "local"
+        ? await localReviewSummaries(this.db, orgId, projectId, workspaceByStory)
+        : new Map<string, LocalReviewSummary | null>();
     const assigneesByStory = new Map<string, typeof assigneeRows>();
     for (const row of assigneeRows) {
       assigneesByStory.set(row.storyId, [...(assigneesByStory.get(row.storyId) ?? []), row]);

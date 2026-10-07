@@ -59,6 +59,25 @@ export function currentChecks<Row>(events: Array<LocalEvidence<Row>>, commitSha:
   return checks;
 }
 
+/** Where review of the story's head stands. */
+export type LocalReviewStatus = "none" | "approved" | "stale" | "changes_requested";
+
+/**
+ * The one rule both surfaces use: a decision applies only to the commit it was
+ * made on. An approval of an earlier commit, or of a head that now has
+ * uncommitted work, is stale; changes requested on an earlier commit leave the
+ * new head waiting for review.
+ */
+export function reviewStatus(
+  review: ReturnType<typeof latestReview>,
+  head: { sha: string; clean: boolean },
+): LocalReviewStatus {
+  if (!review) return "none";
+  if (review.data.commitSha !== head.sha) return review.approved ? "stale" : "none";
+  if (!review.approved) return "changes_requested";
+  return head.clean ? "approved" : "stale";
+}
+
 /** Review of a local-repository story: the counterpart of an open pull request. */
 export type LocalReviewSummary = {
   status: "awaiting_review" | "approved" | "changes_requested";
@@ -78,13 +97,9 @@ export function localReviewSummary(input: {
 }): LocalReviewSummary | null {
   const head = input.head;
   if (!head || head.dirty || input.imported.includes(head.sha)) return null;
-  const review = latestReview(input.events);
+  const current = reviewStatus(latestReview(input.events), { sha: head.sha, clean: true });
   const status =
-    review?.data.commitSha !== head.sha
-      ? "awaiting_review"
-      : review.approved
-        ? "approved"
-        : "changes_requested";
+    current === "approved" || current === "changes_requested" ? current : "awaiting_review";
   const checks = [...currentChecks(input.events, head.sha).values()];
   return { status, checksFailing: checks.some(({ data }) => data.exitCode !== 0) };
 }

@@ -73,7 +73,6 @@ export type PhaseResult = { phase: WorkPhase; reason: PhaseReason };
 export function derivePhase(input: PhaseInput): PhaseResult {
   const story = input.story ?? null;
   const pull = input.pullRequest ?? null;
-  const local = input.localReview ?? null;
   if (story?.deletedAt) return { phase: "archived", reason: "deleted" };
   if (story?.status === "archived") return { phase: "archived", reason: "archived" };
   if (pull?.state === "merged") return { phase: "done", reason: "merged" };
@@ -83,31 +82,17 @@ export function derivePhase(input: PhaseInput): PhaseResult {
   if (input.activeTurn?.state === "queued") return { phase: "in_progress", reason: "queued" };
   if (input.issue?.state === "closed") return { phase: "done", reason: "issue_closed" };
   if (input.openAttention.length > 0) return { phase: "attention", reason: "attention" };
-  if (pull?.state === "open" && pull.ciState === "failure") {
-    return { phase: "attention", reason: "checks_failing" };
-  }
-  if (pull?.state === "open" && pull.reviewState === "changes_requested") {
-    return { phase: "attention", reason: "changes_requested" };
-  }
-  if (local?.checksFailing) return { phase: "attention", reason: "checks_failing" };
-  if (local?.status === "changes_requested") {
+  const review = openReview(pull, input.localReview ?? null);
+  if (review?.checksFailing) return { phase: "attention", reason: "checks_failing" };
+  if (review?.decision === "changes_requested") {
     return { phase: "attention", reason: "changes_requested" };
   }
   if (story?.status === "attention") return { phase: "attention", reason: "attention" };
-  if (pull?.state === "open" && pull.draft) {
-    return { phase: "in_progress", reason: "draft_pull_request" };
-  }
-  if (pull?.state === "open") {
+  if (review?.draft) return { phase: "in_progress", reason: "draft_pull_request" };
+  if (review) {
     return {
       phase: "review",
-      reason: pull.reviewState === "approved" ? "approved" : "awaiting_review",
-    };
-  }
-  // An export is not a merge: an approved local story stays in review until done.
-  if (local) {
-    return {
-      phase: "review",
-      reason: local.status === "approved" ? "approved" : "awaiting_review",
+      reason: review.decision === "approved" ? "approved" : "awaiting_review",
     };
   }
   if (story) {
@@ -118,6 +103,29 @@ export function derivePhase(input: PhaseInput): PhaseResult {
     return { phase: "in_progress", reason: "started" };
   }
   return { phase: "not_started", reason: "issue_open" };
+}
+
+/**
+ * The review a story is waiting on: its open pull request, or for a local
+ * repository its local review. An export is not a merge, so an approved local
+ * story stays in review until it is done.
+ */
+function openReview(pull: PullRequestSummary | null, local: LocalReviewSummary | null) {
+  if (pull?.state === "open") {
+    return {
+      checksFailing: pull.ciState === "failure",
+      decision: pull.reviewState,
+      draft: pull.draft,
+    };
+  }
+  if (local) {
+    return {
+      checksFailing: local.checksFailing,
+      decision: local.status === "awaiting_review" ? null : local.status,
+      draft: false,
+    };
+  }
+  return null;
 }
 
 /** Human wording for a phase; API consumers use the machine value. */

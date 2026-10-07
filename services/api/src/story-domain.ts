@@ -99,6 +99,7 @@ export function createStoryDomain(input: {
         maxSnapshotBytes: input.config.localSnapshotMaxBytes,
       }),
   );
+  const localAccess = new LocalRepositoryAccess(input.db, input.config.localGitIdentity);
   // GitHub is one optional repository source. Local projects never mint GitHub credentials.
   const sources = new ProjectRepositorySources(input.db, {
     github: {
@@ -107,7 +108,7 @@ export function createStoryDomain(input: {
       catalog: new GithubAgentCatalogSource(input.db, githubFactory),
     },
     local: {
-      access: new LocalRepositoryAccess(input.db, input.config.localGitIdentity),
+      access: localAccess,
       manifests: new LocalProjectManifestSource(localRepositories),
       catalog: new LocalAgentCatalogSource(localRepositories),
     },
@@ -129,7 +130,7 @@ export function createStoryDomain(input: {
   const localReview = new LocalReviewService(
     input.db,
     runtime,
-    credentials,
+    localAccess,
     projectManifests,
     environment,
     localWorkspace,

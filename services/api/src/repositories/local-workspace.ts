@@ -210,16 +210,18 @@ export class LocalWorkspaceSource implements WorkspaceRepositorySource {
         ".",
         "local import",
       );
+      // Run from the workspace root, where the staged bundle lives; `git -C` enters the repository.
       await git.run(
-        "git",
+        "sh",
         [
-          "fetch",
-          "--quiet",
-          "--no-tags",
-          `${"../".repeat(cwd.split("/").length)}${staging}.bundle`,
+          "-c",
+          'git -C "$1" fetch --quiet --no-tags "$PWD/$2" "$3"',
+          "sh",
+          cwd,
+          `${staging}.bundle`,
           `+refs/facility/import:${localSourceRef(repository)}`,
         ],
-        cwd,
+        ".",
         "local import",
       );
     } finally {
